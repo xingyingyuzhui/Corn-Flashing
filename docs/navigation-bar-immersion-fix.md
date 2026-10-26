@@ -10,6 +10,8 @@
 
 真机视觉验证待完成：当前无线 ADB 离线且没有发现 mDNS 设备，未安装或截取修复后的真机画面。不能据此声称小米系统上的视觉问题已经实测关闭。
 
-本地 APK：`dist/Corn-Flashing-0.1.6-navigation-fix.apk`（沿用 0.1.6 / versionCode 20，debug 签名），旁附 SHA-256 文件。
+模拟器补充验证：Pixel 9 Pro / API 35 已安装修复版并打开工作台，截图显示手势条区域与页面背景连通，悬浮 dock 保持安全间距。已切换为带窗口的模拟器供用户查看；小米真机仍未验证。
+
+发布 APK：`dist/Corn-Flashing-0.1.7.apk`（0.1.7 / versionCode 21，沿用 0.1.6 的 debug 签名），旁附 SHA-256 文件。
 
 实现依据：[Android 系统栏保护](https://developer.android.com/develop/ui/compose/system/system-bars)、[Material 3 系统窗口边距](https://developer.android.com/develop/ui/compose/system/material-insets)。

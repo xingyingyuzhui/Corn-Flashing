@@ -1,6 +1,6 @@
 # Corn Flashing
 
-正式版：**0.1.6**（versionCode 20）。本版新增参数保留区、CMSIS-Pack/FLM 算法导入与可扩展兼容性引擎，详见 [0.1.6 说明](docs/test-build-0.1.6-test12.md)。
+正式版：**0.1.7**（versionCode 21）。本版修复系统底部手势区域的沉浸效果，保留悬浮 dock 的安全间距，详见 [沉浸修复说明](docs/navigation-bar-immersion-fix.md)。保留 0.1.6 的参数保留区、CMSIS-Pack/FLM 算法导入与可扩展兼容性引擎。
 
 Android 离线单片机烧录工具的基础框架。目标为 ST-LINK/V2 + STM32F103，后续扩展其他探针和多路批量。
 
@@ -10,12 +10,12 @@ Android 离线单片机烧录工具的基础框架。目标为 ST-LINK/V2 + STM3
 
 ## 安装包
 
-安装包在 GitHub Release [v0.1.6](https://github.com/xingyingyuzhui/Corn-Flashing/releases/tag/v0.1.6)，APK 不入库。
+安装包在 GitHub Release [v0.1.7](https://github.com/xingyingyuzhui/Corn-Flashing/releases/tag/v0.1.7)，APK 不入库。
 
-- [`Corn-Flashing-0.1.6.apk`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.6/Corn-Flashing-0.1.6.apk)：日常安装（模拟烧录 + 真实 ST-LINK F1 烧录；本机 Debug 密钥签名）。
-- [`Corn-Flashing-0.1.6-debug.apk`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.6/Corn-Flashing-0.1.6-debug.apk)：与上一包相同，文件名带 debug。
+- [`Corn-Flashing-0.1.7.apk`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.7/Corn-Flashing-0.1.7.apk)：日常安装（模拟烧录 + 真实 ST-LINK F1 烧录；本机 Debug 密钥签名）。
+- [`Corn-Flashing-0.1.7.apk.sha256`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.7/Corn-Flashing-0.1.7.apk.sha256)：安装包校验值。
 
-> **升级提示**：0.1.6 与 v0.1.5 及更早版本使用不同签名密钥。从旧版升级需先卸载旧包（会清空任务记录与保留区设置），不能直接覆盖安装。
+> **升级提示**：0.1.7 沿用 0.1.6 的签名，可覆盖升级。v0.1.5 及更早版本使用不同签名密钥，需先卸载旧包（会清空任务记录与保留区设置）。
 
 ## 已实现
 
