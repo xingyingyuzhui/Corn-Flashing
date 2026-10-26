@@ -80,7 +80,10 @@ fun CornApp(vm: FlashViewModel) {
         if (log.jobId != job.id) {
             log.jobId = job.id; log.lines.clear(); log.stageStart.clear(); log.startedAt = now; log.endedAt = 0L
         }
-        state.flashStage?.let { if (it !in log.stageStart) log.stageStart[it] = now }
+        state.flashStage?.let { stage ->
+            // Fast stages can be conflated away; mark skipped earlier steps as started now.
+            FlashStage.entries.filter { it.ordinal <= stage.ordinal && it !in log.stageStart }.forEach { log.stageStart[it] = now }
+        }
         val line = "${formatTime(now)}  ${state.message}"
         if (log.lines.lastOrNull()?.substringAfter("  ") != state.message) log.lines.add(line)
         if (!state.running && log.endedAt == 0L && job.finishedAt != null) log.endedAt = now
@@ -379,14 +382,14 @@ val SIX_STEPS = listOf(FlashStage.CONNECTING, FlashStage.PROBING, FlashStage.ERA
 fun stepLabel(stage: FlashStage, pages: Int?) = when (stage) {
     FlashStage.CONNECTING -> "连接探针"
     FlashStage.PROBING -> "识别芯片"
-    FlashStage.ERASING -> "擦除 ${pages ?: ""} 页".replace("  ", " ")
+    FlashStage.ERASING -> if (pages == null) "擦除" else "擦除 $pages 页"
     FlashStage.WRITING -> "写入"
     FlashStage.VERIFYING -> "回读校验"
     FlashStage.RESETTING -> "复位运行"
     FlashStage.SUCCEEDED -> "完成"
 }
 
-fun stageLabel(stage: FlashStage) = stepLabel(stage, null).replace(" 页", "")
+fun stageLabel(stage: FlashStage) = stepLabel(stage, null)
 
 @Composable
 private fun FlowScreen(vm: FlashViewModel, state: SessionState, log: RunLog, history: List<JobEntity>, onBack: () -> Unit) {
@@ -424,7 +427,7 @@ private fun ColumnScope.RunningScreen(vm: FlashViewModel, state: SessionState, l
             VDivider()
             StatCell(if (p > 0.05f) secs(((elapsed * (1 - p)) / p).toLong()) else "—", "剩余", size = 16.sp, modifier = Modifier.weight(1f))
             VDivider()
-            StatCell("#${seq + 1}", "本次序号", size = 16.sp, modifier = Modifier.weight(1f))
+            StatCell("#$seq", "本次序号", size = 16.sp, modifier = Modifier.weight(1f))
         }
         StepList(state.flashStage, null, log, fw?.let { erasePages(it, vm.profile) }, running = true)
         LiveLog(log)
@@ -438,7 +441,7 @@ fun SimNote() = T("模拟烧录器：流程与计时为演示，不操作真实�
 
 /** 6-step stepper. [stoppedAt] marks a failed / interrupted step in red. */
 @Composable
-fun StepList(current: FlashStage?, stoppedAt: FlashStage?, log: RunLog?, pages: Int?, running: Boolean) {
+fun StepList(current: FlashStage?, stoppedAt: FlashStage?, log: RunLog?, pages: Int?, running: Boolean, stopText: String = "失败") {
     val curIndex = current?.let { SIX_STEPS.indexOf(it).let { i -> if (it == FlashStage.SUCCEEDED) 6 else i } } ?: -1
     val stopIndex = stoppedAt?.let { SIX_STEPS.indexOf(it) } ?: -1
     CornCard(spacing = 0.dp) {
@@ -462,7 +465,7 @@ fun StepList(current: FlashStage?, stoppedAt: FlashStage?, log: RunLog?, pages: 
                 T(stepLabel(stage, pages), when { bad -> CornColors.Red; now -> CornColors.Corn; done -> CornColors.Text; else -> CornColors.Mute },
                     13.5.sp, if (now) FontWeight.Bold else FontWeight.Medium, modifier = Modifier.weight(1f).padding(top = 2.dp))
                 val t = log?.let { stepTime(it, i) }
-                T(when { bad -> if (stage == FlashStage.WRITING) "中断" else "失败"; t != null -> t; now -> "…"; else -> "" },
+                T(when { bad -> stopText; t != null -> t; now -> "…"; else -> "" },
                     if (bad) CornColors.Red else CornColors.Dim, 11.5.sp, mono = true, modifier = Modifier.padding(top = 3.dp))
             }
         }
@@ -637,7 +640,7 @@ private fun ColumnScope.NoTargetScreen(vm: FlashViewModel, job: JobEntity, onBac
         }
     }
     Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        CornButton("降速 1.8 MHz 重试", vm::startSingle, Modifier.weight(1f))
+        CornButton("降速重试 · 模拟", vm::startSingle, Modifier.weight(1f))
         CornButton("复位后连接", vm::startSingle, Modifier.weight(1f), primary = true)
     }
 }
@@ -659,6 +662,7 @@ fun PinRow(pin: String, target: String, value: String, color: Color, last: Boole
 @Composable
 private fun ColumnScope.AbortedScreen(vm: FlashViewModel, state: SessionState, log: RunLog, onBack: () -> Unit) {
     val job = state.job!!
+    val fw = state.firmware
     val stopped = log.stageStart.keys.filter { it != FlashStage.SUCCEEDED }.maxByOrNull { it.ordinal } ?: FlashStage.CONNECTING
     BackTop("烧录中断", "工位 1 · ${job.firmwareName}", onBack = onBack) { Chip("未完成", ChipTone.BAD, dot = true) }
     ScrollBody(Modifier.weight(1f)) {
@@ -670,7 +674,7 @@ private fun ColumnScope.AbortedScreen(vm: FlashViewModel, state: SessionState, l
             T("停在「${stepLabel(stopped, null).trim()}」· ${formatTime(job.finishedAt ?: job.startedAt)}", CornColors.Dim, 12.5.sp)
         }
         Banner("这块板现在不能用", "可能已经擦除，只写了一部分，程序不完整。同一块板需要从头重烧。")
-        StepList(null, stopped, log, null, running = false)
+        StepList(null, stopped, log, fw?.let { erasePages(it, vm.profile) }, running = false, stopText = "中断")
         DashedNote {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Ico(Lucide.Repeat, CornColors.Corn, 16.dp)

@@ -62,7 +62,8 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
         singleCounter++
         val target = dev.corn.flashing.core.DemoFlashBackend.DEFAULT_TARGET.copy(
             uid = "DEMO-%08X".format(0x35FF_D605L + singleCounter * 0x10F))
-        val roll = kotlin.random.Random.nextInt(10)
+        // Fixed cycle so a demo shows every result: boards 3 and 7 fail verify, board 9 has no target.
+        val roll = when ((singleCounter % 10).toInt()) { 3, 7 -> 0; 9 -> 3; else -> 9 }
         val failure = when {
             !prefs.injectFaults -> null
             roll in 0..2 -> dev.corn.flashing.core.DemoFailure(dev.corn.flashing.core.FlashStage.VERIFYING, "模拟校验失败：0x08003C00 期望 0x4A，读回 0xFF")
