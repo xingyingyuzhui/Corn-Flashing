@@ -83,7 +83,7 @@ private fun BatchRun(vm: FlashViewModel, state: SessionState, view: BatchView) {
             T("本批次进度", CornColors.Dim, 11.5.sp)
             Row(verticalAlignment = Alignment.Bottom) {
                 T("${tally.succeeded}", size = 54.sp, weight = FontWeight.Bold, mono = true, lineHeight = 58.sp)
-                T(" / $planned", CornColors.Dim, 24.sp, FontWeight.Bold, mono = true, modifier = Modifier.padding(bottom = 8.dp))
+                T("/ $planned", CornColors.Dim, 24.sp, FontWeight.Bold, mono = true, modifier = Modifier.padding(start = 6.dp, bottom = 8.dp))
             }
         }
         CornBar(tally.succeeded.toFloat() / planned, height = 8)
@@ -210,8 +210,7 @@ fun NewBatchScreen(vm: FlashViewModel, state: SessionState, devices: List<UsbPro
                         DividerLine()
                     }
                     SRow("固件", firmware?.let { "${shortSha(it.image.sourceSha256)} · ${kb(it.image.totalBytes)}" } ?: "未选择 · 点此去固件库",
-                        onClick = if (firmware == null) onGoFirmware else null,
-                        leading = { T("", modifier = Modifier.width(0.dp)) }) {
+                        onClick = if (firmware == null) onGoFirmware else null) {
                         if (firmware != null) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             FormatBadge(firmware.image.format.name); T(firmware.name, size = 13.sp, weight = FontWeight.SemiBold, maxLines = 1)
                         } else Chev()

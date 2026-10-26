@@ -401,9 +401,10 @@ fun OutcomeStrip(outcomes: List<BoardOutcome>, modifier: Modifier = Modifier) {
                 (0 until 15).forEach { c ->
                     val i = r * 15 + c
                     val outcome = cells.getOrNull(i)
-                    Box(Modifier.weight(1f).height(18.dp).clip(RoundedCornerShape(4.dp))
-                        .background(outcome?.let { outcomeColor(it) } ?: CornColors.Surface2)
-                        .alpha(1f).let { if (outcome != null) it.alpha(0.35f + 0.65f * (i + 1) / cells.size) else it })
+                    Box(Modifier.weight(1f).height(18.dp)
+                        .alpha(if (outcome != null) 0.35f + 0.65f * (i + 1) / cells.size else 1f)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(outcome?.let { outcomeColor(it) } ?: CornColors.Surface2))
                 }
             }
         }
