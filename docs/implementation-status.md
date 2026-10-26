@@ -1,5 +1,11 @@
 # 基础框架交付状态
 
+## 2026-10-26 · 发布 v0.1.2（合并 config-auto-match）
+
+- PR #3 已合入 main；versionCode 4 / versionName 0.1.2。
+- 开放 F1 产品模板（0x412 / 0x410 / 0x414 / 0x430）；探测后自动匹配设备组、容量、页大小并持久化。
+- Debug APK 双文件名（与 0.1.1 相同签名方式）。
+
 ## 2026-10-26 · 发布 v0.1.1（合并 stlink-probe-v1）
 
 - PR #2 已合入 main；versionCode 3 / versionName 0.1.1。
