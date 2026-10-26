@@ -25,6 +25,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.corn.flashing.core.ProductProfile
+import dev.corn.flashing.core.TargetInfo
+import dev.corn.flashing.core.FirmwarePreflight
 import dev.corn.flashing.core.hexAddress
 import dev.corn.flashing.core.regions
 import dev.corn.flashing.storage.ImportedFirmware
@@ -158,10 +160,15 @@ fun importErrorAdvice(error: String): Pair<String, String> = when {
 // ---------------------------------------------------------------- firmware detail (06)
 
 @Composable
-fun FirmwareDetailScreen(fw: ImportedFirmware, profile: ProductProfile, onBack: () -> Unit) {
+fun FirmwareDetailScreen(fw: ImportedFirmware, profile: ProductProfile, target: TargetInfo?, onBack: () -> Unit) {
     val regions = fw.image.regions()
+    val preflight = FirmwarePreflight.inspect(fw.image, profile, target)
     Column(Modifier.fillMaxSize().systemBarsPadding()) {
-        BackTop("固件详情", "可用于 F103 · ${profile.flashSizeBytes / 1024} KB", onBack = onBack)
+        BackTop("固件详情", when {
+            !preflight.targetKnown -> "目标容量待识别 · 尚未确认适配"
+            !preflight.canStart -> "当前目标配置检查未通过"
+            else -> "地址检查通过 · ${profile.flashSizeBytes / 1024} KB"
+        }, onBack = onBack)
         ScrollBody(Modifier.weight(1f)) {
             CornCard(spacing = 8.dp) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -200,8 +207,13 @@ fun FirmwareDetailScreen(fw: ImportedFirmware, profile: ProductProfile, onBack: 
             CornCard {
                 Label("导入检查")
                 CheckLine(true, "格式解析通过（${fw.image.format.name}${if (fw.image.format.name == "HEX") " · 每行校验和正确" else ""}）")
-                CheckLine(inFlash, if (inFlash) "地址都在 Flash 范围内" else "有数据超出 Flash 范围")
-                CheckLine(!overlap, if (overlap) "与保留区重叠" else "不碰保留区")
+                if (preflight.targetKnown) {
+                    CheckLine(inFlash, if (inFlash) "地址都在 Flash 范围内" else "有数据超出 Flash 范围")
+                    CheckLine(preflight.canStart, preflight.error ?: "擦除页与目标配置检查通过")
+                    CheckLine(!overlap, if (overlap) "与保留区重叠" else "不碰保留区")
+                } else {
+                    T("当前布局按占位配置展示；请先识别芯片，实际容量与擦除范围尚未确认。", CornColors.Mute, 12.sp)
+                }
                 CheckLine(regions.size <= 1, if (regions.size <= 1) "连续区段" else "${regions.size} 个区段，中间有空洞（空洞不写）", last = true)
             }
             CornButton("当前固件 ✓", {}, Modifier.fillMaxWidth(), primary = true, enabled = false)

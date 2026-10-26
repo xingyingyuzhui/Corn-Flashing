@@ -25,7 +25,7 @@ class StLinkProtocolTest {
         // stlink=2, jtag=26, swim=4 → packed ((2<<12)|(26<<6)|4) = 0x2694
         val packed = (2 shl 12) or (26 shl 6) or 4
         val raw = byteArrayOf(
-            (packed and 0xFF).toByte(), ((packed shr 8) and 0xFF).toByte(),
+            ((packed shr 8) and 0xFF).toByte(), (packed and 0xFF).toByte(),
             0, 0, 0, 0,
         )
         val v = StLinkProtocol.parseVersion(raw)
@@ -94,4 +94,41 @@ class StLinkProtocolTest {
     @Test fun packsResetSys() {
         assertArrayEquals(StLinkProtocol.cmd(0xF2, 0x32), StLinkProtocol.resetSys())
     }
+    @Test fun parsesRealWireOrderAndFirmwareCapability() {
+        val v = StLinkProtocol.parseVersion(byteArrayOf(0x2B, 0x47, 0, 0, 0, 0))
+        assertEquals(2, v.stlink); assertEquals(45, v.jtag); assertEquals(7, v.swim)
+        assertTrue(v.supportsHalfWordWrite)
+        v.requireF1ProgrammingSupport()
+        assertFalse(StLinkVersion(2, 25, 0, byteArrayOf()).supportsHalfWordWrite)
+        assertThrows(IllegalArgumentException::class.java) {
+            StLinkVersion(2, 25, 0, byteArrayOf()).requireF1ProgrammingSupport()
+        }
+        assertFalse(StLinkVersion(3, 1, 0, byteArrayOf()).supportsHalfWordWrite)
+    }
+
+    @Test fun packsHalfWordWriteWithExplicit16BitOpcode() {
+        assertArrayEquals(byteArrayOf(0xF2.toByte(), 0x48, 0x02, 0, 0, 0x08, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+            StLinkProtocol.writeMem16(0x08000002L, 2))
+        assertThrows(IllegalArgumentException::class.java) { StLinkProtocol.writeMem16(0x08000001L, 2) }
+        assertThrows(IllegalArgumentException::class.java) { StLinkProtocol.writeMem16(0x08000000L, 3) }
+    }
+
+    @Test fun resetWireValuesAndFaultStatusAreStrict() {
+        assertArrayEquals(StLinkProtocol.cmd(0xF2, 0x3C, 2), StLinkProtocol.driveNrst(StLinkProtocol.NRST_PULSE))
+        assertEquals(0, StLinkProtocol.NRST_LOW); assertEquals(1, StLinkProtocol.NRST_HIGH)
+        StLinkProtocol.requireStatusOk(byteArrayOf(0x80.toByte(), 0), "ok")
+        assertThrows(IllegalArgumentException::class.java) { StLinkProtocol.requireStatusOk(byteArrayOf(0, 0), "not SWIM") }
+        assertThrows(IllegalArgumentException::class.java) { StLinkProtocol.requireStatusOk(byteArrayOf(0x81.toByte(), 0), "fault") }
+    }
+
+    @Test fun readMem8SingleByteReplyHasWirePadding() {
+        val command = StLinkProtocol.readMem8(0x08000001, 1)
+        assertEquals(0x0C.toByte(), command[1])
+        assertEquals(1.toByte(), command[6])
+        assertEquals(2, StLinkProtocol.readMem8ReplySize(1))
+        assertEquals(2, StLinkProtocol.readMem8ReplySize(2))
+        assertEquals(64, StLinkProtocol.readMem8ReplySize(64))
+        assertThrows(IllegalArgumentException::class.java) { StLinkProtocol.readMem8(0x08000001, 65) }
+    }
+
 }

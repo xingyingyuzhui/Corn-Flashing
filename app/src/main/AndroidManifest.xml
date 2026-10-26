@@ -1,6 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <application android:name=".CornApplication" android:allowBackup="false" android:dataExtractionRules="@xml/data_extraction_rules"
@@ -13,6 +14,6 @@
             </intent-filter>
         </activity>
         <service android:name=".service.FlashService" android:exported="false"
-            android:foregroundServiceType="shortService" />
+            android:foregroundServiceType="shortService|connectedDevice" />
     </application>
 </manifest>

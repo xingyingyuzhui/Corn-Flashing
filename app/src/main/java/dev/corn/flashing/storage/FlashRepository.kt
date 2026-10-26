@@ -186,7 +186,8 @@ class FlashRepository(
         val firmware = current.firmware ?: return null
         val record = JobEntity(UUID.randomUUID().toString(), firmware.name,
             firmware.image.sourceSha256, profile.name, startedAt = System.currentTimeMillis(),
-            targetUid = request.board.target.uid, batchId = request.batchId, seq = request.seq)
+            targetUid = if (request.useSimulator) request.board.target.uid else null,
+            mode = if (request.useSimulator) "DEMO" else "STLINK", batchId = request.batchId, seq = request.seq)
         pending = record to (firmware to request)
         val sim = request.useSimulator
         _state.update { it.copy(running = true, progress = 0f, flashStage = null, failedStage = null, stage = "正在排队",
@@ -228,6 +229,10 @@ class FlashRepository(
         failed?.let { _finished.tryEmit(it) }
     }
 
+    /** Main-thread service startup query; null means the job is no longer pending. */
+    fun pendingUsesSimulator(id: String): Boolean? =
+        pending?.takeIf { it.first.id == id }?.second?.second?.useSimulator
+
     suspend fun runJob(id: String) {
         val queued = pending?.takeIf { it.first.id == id } ?: return
         pending = null
@@ -255,10 +260,12 @@ class FlashRepository(
             }
             record = if (backend.isSimulation) {
                 record.copy(status = "SIMULATED", stage = "模拟完成", serial = request.serialOnSuccess,
-                    message = "模拟流程完成；未进行真实擦写或硬件校验")
+                    message = (if (request.executeOptions.verifyMode == 2) "模拟流程完成（未校验）" else "模拟流程完成 · 模拟校验完成") +
+                        (if (request.executeOptions.resetAfter) " · 模拟复位" else "") + "；未进行真实擦写或硬件校验")
             } else {
                 record.copy(status = "SUCCEEDED", stage = "完成", serial = request.serialOnSuccess,
-                    message = "真实擦写与回读完成" + if (request.executeOptions.resetAfter) " · 已复位" else "")
+                    message = (if (request.executeOptions.verifyMode == 2) "写入完成（未校验）" else "真实擦写与回读校验完成") +
+                        if (request.executeOptions.resetAfter) " · 已复位" else "")
             }
         } catch (cancelled: CancellationException) {
             record = record.copy(status = "CANCELLED", stage = "已中止",

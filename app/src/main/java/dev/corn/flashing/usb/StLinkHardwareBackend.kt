@@ -9,6 +9,7 @@ import dev.corn.flashing.core.FlashPlan
 import dev.corn.flashing.core.FlashProgress
 import dev.corn.flashing.core.FlashStage
 import dev.corn.flashing.core.TargetInfo
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -52,7 +53,8 @@ class StLinkHardwareBackend(
             val live = session.identify()
             lastVoltageMv = session.voltageMv
             lastTarget = live
-            require(live.deviceId == plan.target.deviceId && live.flashSizeBytes == plan.target.flashSizeBytes) {
+            require(live.deviceId == plan.target.deviceId && live.flashSizeBytes == plan.target.flashSizeBytes &&
+                live.uid == plan.target.uid) {
                 "目标芯片与规划时不一致，请重新识别后再烧"
             }
             onProgress(
@@ -65,28 +67,21 @@ class StLinkHardwareBackend(
 
             val pages = erasePages(plan, options)
             require(pages.isNotEmpty()) { "没有需要擦除的页" }
-            val verify = options.verifyMode != 2
+            val cancellation = currentCoroutineContext()
             try {
                 session.programF1(
-                    image = plan.image,
+                    plan = plan,
                     pages = pages,
-                    pageSize = plan.profile.pageSize,
-                    resetAfter = options.resetAfter,
-                    verify = verify,
+                    options = options,
+                    checkCancelled = { cancellation.ensureActive() },
                 ) { stage, frac, msg ->
                     onProgress(FlashProgress(stage, frac, msg))
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
                 if (error is FlashFailure) throw error
-                val stage = when {
-                    error.message?.contains("校验") == true -> FlashStage.VERIFYING
-                    error.message?.contains("擦除") == true -> FlashStage.ERASING
-                    error.message?.contains("编程") == true || error.message?.contains("写入") == true ->
-                        FlashStage.WRITING
-                    error.message?.contains("复位") == true -> FlashStage.RESETTING
-                    else -> FlashStage.ERASING
-                }
-                throw FlashFailure(stage, error.message ?: "擦写失败")
+                throw FlashFailure(FlashStage.PROBING, error.message ?: "烧录预检失败")
             }
         }
     }

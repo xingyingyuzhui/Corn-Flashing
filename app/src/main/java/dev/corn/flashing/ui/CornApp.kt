@@ -28,6 +28,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.corn.flashing.core.FlashStage
+import dev.corn.flashing.core.FirmwarePreflight
+import dev.corn.flashing.core.isFirmwareConfigurationError
+import dev.corn.flashing.core.TargetInfo
+import dev.corn.flashing.core.DemoFlashBackend
+import dev.corn.flashing.core.ProductProfiles
 import dev.corn.flashing.core.ProductProfile
 import dev.corn.flashing.core.hexAddress
 import dev.corn.flashing.core.regions
@@ -133,7 +138,7 @@ fun CornApp(vm: FlashViewModel) {
                 }
                 page == Page.FIRMWARE_DETAIL && state.firmware != null -> {
                     BackHandler { page = Page.NONE }
-                    FirmwareDetailScreen(state.firmware!!, vm.profile, onBack = { page = Page.NONE })
+                    FirmwareDetailScreen(state.firmware!!, effectiveProfile(state, vm), effectiveTarget(state, vm), onBack = { page = Page.NONE })
                 }
                 page == Page.NEW_BATCH && batch == null -> {
                     BackHandler { page = Page.NONE }
@@ -293,14 +298,20 @@ private fun Workbench(
         }
         FirmwareCard(state.firmware, effectiveProfile(state, vm), onGoFirmware, vm)
         val firmware = state.firmware
-        val pages = firmware?.let { erasePages(it, effectiveProfile(state, vm)) }
+        val preflight = firmware?.let { FirmwarePreflight.inspect(it.image, effectiveProfile(state, vm), effectiveTarget(state, vm)) }
+        val pages = firmware?.takeIf { preflight?.targetKnown == true && preflight.canStart }?.let { erasePages(it, effectiveProfile(state, vm)) }
         CornButton("开始烧录", onStart, Modifier.fillMaxWidth(), primary = true, height = 64, radius = 20, icon = Lucide.Bolt,
-            enabled = state.ready && !state.importing && firmware != null && !state.running,
+            enabled = state.ready && !state.importing && firmware != null && !state.running && preflight?.canStart == true,
             subtitle = when {
                 firmware == null -> "先选择固件"
+                preflight?.error != null -> "固件不符合目标容量或配置"
+                preflight?.targetKnown != true -> "先识别目标容量，再检查并烧录"
                 sim -> "模拟 · 擦除 $pages 页 · 写入 ${kb(firmware.image.totalBytes)}"
                 else -> "真实擦写 · ${pages ?: "?"} 页 · 回读校验"
             })
+        preflight?.error?.let { message ->
+            T(message + if (sim) "；当前模拟芯片固定为 64 KB" else "；请检查固件与目标配置", CornColors.Red, 12.sp)
+        }
         CornCard(padding = 0.dp) {
             Column(Modifier.padding(horizontal = 14.dp)) {
                 SRow("自动换板", if (sim) "模拟：成功后点「立即再烧一块」" else "成功后探测到新 UID 自动开始") {
@@ -338,9 +349,13 @@ fun Chain(vararg nodes: ChainNode) {
     }
 }
 
+fun effectiveTarget(state: SessionState, vm: FlashViewModel): TargetInfo? =
+    if (vm.prefs.simulator) DemoFlashBackend.DEFAULT_TARGET
+    else state.target?.takeUnless { it.uid?.startsWith("DEMO-") == true }
+
 fun effectiveProfile(state: SessionState, vm: FlashViewModel): ProductProfile {
-    val target = state.target ?: return vm.profile
-    return dev.corn.flashing.core.ProductProfiles.alignedTo(dev.corn.flashing.core.ProductProfiles.F103_OPEN, target)
+    val target = effectiveTarget(state, vm) ?: return ProductProfiles.F103_OPEN
+    return ProductProfiles.alignedTo(ProductProfiles.F103_OPEN, target)
 }
 
 fun erasePages(firmware: ImportedFirmware, profile: ProductProfile): Int =
@@ -613,12 +628,13 @@ private fun ColumnScope.SuccessScreen(vm: FlashViewModel, state: SessionState, l
     val job = state.job!!
     val fw = state.firmware
     var showLog by remember { mutableStateOf(false) }
+    val simJob = job.mode == "DEMO"
+    val verified = !job.message.contains("未校验")
     BackTop("烧录完成", "工位 1 · ${job.firmwareName}", onBack = onBack) { Chip("可拔线", ChipTone.OK, dot = true) }
     ScrollBody(Modifier.weight(1f)) {
-        ResultHeader(Lucide.Check, CornColors.Leaf, CornColors.LeafContainer, "烧录成功",
+        ResultHeader(Lucide.Check, CornColors.Leaf, CornColors.LeafContainer, if (verified) "烧录成功" else "写入完成（未校验）",
             "#$seq · 用时 ${secs((job.finishedAt ?: job.startedAt) - job.startedAt)} · ${formatTime(job.finishedAt ?: job.startedAt)}")
         CornCard(padding = 14.dp) {
-            val simJob = job.mode == "DEMO"
             KeyValue(
                 "芯片",
                 state.target?.let { "${it.family} · ${it.flashSizeBytes / 1024} KB" }
@@ -626,13 +642,18 @@ private fun ColumnScope.SuccessScreen(vm: FlashViewModel, state: SessionState, l
             )
             KeyValue("UID", shortUid(job.targetUid), mono = true)
             KeyValue("写入", fw?.let { "${kb(it.image.totalBytes)} · ${erasePages(it, vm.profile)} 页" } ?: "—", mono = true)
-            KeyValue("回读校验", if (simJob) "通过 · 模拟" else "回读通过", valueColor = CornColors.Leaf)
+            KeyValue("回读校验", when {
+                !verified -> "未执行"
+                simJob -> "通过 · 模拟"
+                else -> "回读通过"
+            }, valueColor = if (verified) CornColors.Leaf else CornColors.Corn)
             KeyValue(
                 "复位",
                 when {
-                    !vm.prefs.resetAfter -> "未复位"
-                    simJob -> "已运行 · 模拟"
-                    else -> "已复位运行"
+                    simJob && job.message.contains("模拟复位") -> "已复位 · 模拟"
+                    simJob -> "未复位 · 模拟"
+                    job.message.contains("已复位") -> "已复位并解除停核"
+                    else -> "未复位"
                 },
             )
             KeyValue("目标电压", voltageLabel(vm, state), mono = true, last = true)
@@ -668,37 +689,46 @@ private val noTargetWords = listOf("电压", "未响应", "DBGMCU", "进入 SWD"
 private fun ColumnScope.FailedScreen(vm: FlashViewModel, state: SessionState, log: RunLog, seq: Int, onBack: () -> Unit) {
     val job = state.job!!
     val stage = state.failedStage
-    val noTarget = stage == FlashStage.PROBING || noTargetWords.any { job.message.contains(it) }
+    val configurationError = isFirmwareConfigurationError(job.message)
+    val noTarget = !configurationError && (stage == FlashStage.PROBING || noTargetWords.any { job.message.contains(it) })
     var showLog by remember { mutableStateOf(false) }
     if (noTarget) {
         NoTargetScreen(vm, state, job, onBack)
         return
     }
-    val usbOrProbe = job.message.contains("ST-LINK") || stage in setOf(FlashStage.CONNECTING, FlashStage.PROBING)
+    val usbOrProbe = !configurationError && (job.message.contains("ST-LINK") || stage in setOf(FlashStage.CONNECTING, FlashStage.PROBING))
     val addr = Regex("0x[0-9A-Fa-f]{8}").find(job.message)?.value
     val hex = Regex("0x[0-9A-Fa-f]{2}\\b").findAll(job.message).map { it.value }.toList()
-    BackTop("烧录失败", "工位 1 · ${job.firmwareName}", onBack = onBack) { Chip("该板未通过", ChipTone.BAD, dot = true) }
+    BackTop("烧录失败", "工位 1 · ${job.firmwareName}", onBack = onBack) {
+        Chip(if (configurationError) "配置未通过" else "该板未通过", ChipTone.BAD, dot = true)
+    }
     ScrollBody(Modifier.weight(1f)) {
         ResultHeader(Lucide.X, CornColors.Red, CornColors.RedContainer,
             when {
+                configurationError -> "固件 / 配置不匹配"
                 usbOrProbe -> "连接 / 识别失败"
                 stage == FlashStage.VERIFYING -> "校验失败"
                 stage != null -> "${stageLabel(stage)}失败"
                 else -> "烧录失败"
             },
-            "#$seq · 停在「${stage?.let { stepLabel(it, null).trim() } ?: job.stage}」")
+            if (configurationError) "#$seq · 目标配置检查未通过" else "#$seq · 停在「${stage?.let { stepLabel(it, null).trim() } ?: job.stage}」")
         CornCard {
-            if (!usbOrProbe) {
+            if (configurationError) {
+                KeyValue("检查结果", job.message, valueColor = CornColors.Red)
+            } else if (!usbOrProbe) {
                 KeyValue("出错地址", addr ?: "—", mono = true, valueColor = CornColors.Red)
                 KeyValue("期望", hex.getOrNull(0) ?: "—", mono = true)
                 KeyValue("实际", hex.getOrNull(1) ?: "—", mono = true, valueColor = CornColors.Red)
             }
-            KeyValue("已完成", stage?.let { s -> SIX_STEPS.takeWhile { it != s }.joinToString(" · ") { stageLabel(it) } } ?: "—")
+            KeyValue("已完成", if (configurationError) "输入与目标配置检查" else stage?.let { s -> SIX_STEPS.takeWhile { it != s }.joinToString(" · ") { stageLabel(it) } } ?: "—")
             KeyValue("目标电压", voltageLabel(vm, state), mono = true, last = true)
         }
         CornCard(color = CornColors.RedContainer, border = CornColors.Red.copy(alpha = .25f), spacing = 4.dp) {
             T("可能原因", CornColors.Red, 13.5.sp, FontWeight.Bold)
-            if (usbOrProbe) {
+            if (configurationError) {
+                T("· 固件地址范围超过目标实际容量，或不符合产品配置", CornColors.Dim, 12.sp)
+                T("· 写入或擦除页与需要保留的数据冲突", CornColors.Dim, 12.sp)
+            } else if (usbOrProbe) {
                 T("· USB 未正确配置接口/端点，或 ST-LINK 被电脑端占用", CornColors.Dim, 12.sp)
                 T("· OTG 供电不稳；请拔插 ST-LINK 后重试", CornColors.Dim, 12.sp)
                 T("· 目标未上电或 SWD 未接好（若已过通信阶段）", CornColors.Dim, 12.sp)
@@ -710,7 +740,8 @@ private fun ColumnScope.FailedScreen(vm: FlashViewModel, state: SessionState, lo
         }
         CornCard(spacing = 4.dp) {
             T("建议", size = 13.5.sp, weight = FontWeight.Bold)
-            T("先重试一次；同一块板连续失败就标为不良换板，不同板都失败请检查接线和供电。", CornColors.Dim, 12.sp)
+            T(if (configurationError) "核对固件与芯片容量；必要时重新识别目标、选择匹配固件。配置检查失败不代表控制板损坏。"
+                else "检查完整错误日志、接线和供电；不要仅凭一次烧录失败判定控制板损坏。", CornColors.Dim, 12.sp)
         }
         if (showLog) LiveLog(log, expandedDefault = true)
         T(job.message, CornColors.Mute, 11.sp, mono = true)

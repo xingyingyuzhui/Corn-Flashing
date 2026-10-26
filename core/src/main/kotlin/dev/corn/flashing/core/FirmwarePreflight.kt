@@ -1,0 +1,25 @@
+package dev.corn.flashing.core
+
+/** UI preflight shares the actual erase planner; an unprobed capacity is never a promise. */
+data class FirmwarePreflight(val targetKnown: Boolean, val error: String? = null) {
+    val canStart: Boolean get() = error == null
+
+    companion object {
+        fun inspect(image: FirmwareImage, profile: ProductProfile, target: TargetInfo?): FirmwarePreflight {
+            if (target == null) return FirmwarePreflight(targetKnown = false)
+            return try {
+                FlashPlanner.plan(image, profile, target)
+                FirmwarePreflight(targetKnown = true)
+            } catch (error: IllegalArgumentException) {
+                FirmwarePreflight(targetKnown = true, error = error.message ?: "固件不符合目标配置")
+            }
+        }
+    }
+}
+
+/** Legacy job rows carry a message but no typed validation stage; classify those without blaming USB. */
+fun isFirmwareConfigurationError(message: String): Boolean = listOf(
+    "超出允许范围", "芯片设备组不符合产品配置", "Flash 容量不符合产品配置", "容量异常",
+    "当前仅支持 F103 内部 Flash", "保留区超出 Flash 范围", "没有可烧录数据", "固件含空数据区段",
+    "固件数据区段重叠", "固件覆盖产品保留区", "包含保留数据", "未知或尚未支持的芯片设备组",
+).any(message::contains)

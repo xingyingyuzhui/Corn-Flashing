@@ -24,6 +24,7 @@ object StLinkProtocol {
     const val DEBUG_WRITEMEM_32BIT = 0x08
     const val DEBUG_READMEM_8BIT = 0x0C
     const val DEBUG_WRITEMEM_8BIT = 0x0D
+    const val DEBUG_WRITEMEM_16BIT = 0x48
     const val DEBUG_EXIT = 0x21
     const val DEBUG_APIV2_ENTER = 0x30
     const val DEBUG_APIV2_READ_IDCODES = 0x31
@@ -70,9 +71,9 @@ object StLinkProtocol {
     const val FLASH_SR_PGERR = 0x4
     const val FLASH_SR_WRPRTERR = 0x10
     const val FLASH_SR_EOP = 0x20
-    const val NRST_LOW = 1
-    const val NRST_HIGH = 2
-    const val NRST_PULSE = 3
+    const val NRST_LOW = 0
+    const val NRST_HIGH = 1
+    const val NRST_PULSE = 2
 
     fun cmd(vararg bytes: Int): ByteArray {
         require(bytes.size <= CMD_SIZE) { "ST-LINK command too long" }
@@ -102,6 +103,21 @@ object StLinkProtocol {
         writeU16Le(out, 6, length)
         out[8] = (ap and 0xFF).toByte()
         return out
+    }
+
+    fun readMem8(address: Long, length: Int): ByteArray {
+        require(length in 1..64) { "V2 READMEM_8BIT length must be 1..64" }
+        require(address in 0..0xFFFF_FFFFL && address + length <= 0x1_0000_0000L) { "READMEM_8BIT address overflow" }
+        return ByteArray(CMD_SIZE).also {
+            it[0] = DEBUG_COMMAND.toByte(); it[1] = DEBUG_READMEM_8BIT.toByte()
+            writeU32Le(it, 2, address); writeU16Le(it, 6, length)
+        }
+    }
+
+    /** Wire quirk: the command requests one byte but the bulk response occupies two. */
+    fun readMem8ReplySize(length: Int): Int {
+        require(length in 1..64)
+        return maxOf(2, length)
     }
 
     fun writeDebugReg(address: Long, value: Long): ByteArray {
@@ -142,6 +158,21 @@ object StLinkProtocol {
         return out
     }
 
+    /** V2 J26+: the width is a protocol command, not inferred from payload size. */
+    fun writeMem16(address: Long, length: Int, ap: Int = 0): ByteArray {
+        require(length in 2..1024 && length % 2 == 0) { "WRITEMEM_16BIT length must be even, 2..1024" }
+        require(address in 0..0xFFFF_FFFFL && address % 2 == 0L && address + length <= 0x1_0000_0000L) {
+            "WRITEMEM_16BIT address must be aligned and inside 32-bit memory"
+        }
+        return ByteArray(CMD_SIZE).also {
+            it[0] = DEBUG_COMMAND.toByte()
+            it[1] = DEBUG_WRITEMEM_16BIT.toByte()
+            writeU32Le(it, 2, address)
+            writeU16Le(it, 6, length)
+            it[8] = ap.toByte()
+        }
+    }
+
     fun writeMem8(address: Long, length: Int): ByteArray {
         require(length in 1..1024) { "WRITEMEM_8BIT length must be 1..1024" }
         val out = ByteArray(CMD_SIZE)
@@ -157,7 +188,7 @@ object StLinkProtocol {
 
     fun parseVersion(raw: ByteArray): StLinkVersion {
         require(raw.size >= 6) { "GET_VERSION reply too short" }
-        val v = ((raw[0].toInt() and 0xFF) or ((raw[1].toInt() and 0xFF) shl 8))
+        val v = (((raw[0].toInt() and 0xFF) shl 8) or (raw[1].toInt() and 0xFF))
         val stlink = (v shr 12) and 0x0F
         val jtag = (v shr 6) and 0x3F
         val swim = v and 0x3F
@@ -229,7 +260,7 @@ object StLinkProtocol {
     fun requireStatusOk(raw: ByteArray, label: String) {
         require(raw.isNotEmpty()) { "$label：空应答" }
         val status = raw[0].toInt() and 0xFF
-        require(status == STATUS_OK || status == 0) {
+        require(status == STATUS_OK) {
             "$label：ST-LINK 状态 0x${status.toString(16)}（期望 0x80）"
         }
     }
@@ -257,6 +288,14 @@ object StLinkProtocol {
 
 data class StLinkVersion(val stlink: Int, val jtag: Int, val swim: Int, val raw: ByteArray) {
     val label: String get() = "V$stlink J$jtag"
+    val supportsHalfWordWrite: Boolean get() = stlink == 2 && jtag >= 26
+    val needsApInit: Boolean get() = stlink == 2 && jtag >= 28
+
+    fun requireF1ProgrammingSupport() {
+        require(supportsHalfWordWrite) {
+            "当前探针固件 $label 不支持本版本的 F1 半字编程；需要 ST-LINK/V2 J26 或更高固件。未执行擦除，请先更新探针固件"
+        }
+    }
     override fun equals(other: Any?) = other is StLinkVersion && raw.contentEquals(other.raw)
     override fun hashCode() = raw.contentHashCode()
 }
