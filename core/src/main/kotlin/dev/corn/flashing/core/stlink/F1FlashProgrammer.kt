@@ -15,6 +15,7 @@ interface F1TargetMemory {
 /** Single-bank F1 Flash algorithm; transport errors and cancellation must reach the job owner. */
 class F1FlashProgrammer(
     private val memory: F1TargetMemory,
+    private val ramLoader: F1RamLoader? = null,
     private val checkCancelled: () -> Unit = {},
 ) {
     private var stage = FlashStage.PROBING
@@ -27,6 +28,7 @@ class F1FlashProgrammer(
     ) {
         checkCancelled()
         validateBeforeErase(plan, pages)
+        ramLoader?.prepare() // No Flash mutation until SRAM/register/BKPT self-checks pass.
         var unlocked = false
         var failure: Throwable? = null
         try {
@@ -41,19 +43,33 @@ class F1FlashProgrammer(
             stage = FlashStage.WRITING
             onProgress(stage, .45f, "开始半字写入")
             var written = 0L
-            halfWords(plan.image).forEach { word ->
-                checkCancelled()
-                waitReady()
-                clearFlags()
-                memory.writeWord(StLinkProtocol.ADDR_FLASH_CR, control() or StLinkProtocol.FLASH_CR_PG.toLong())
-                memory.writeHalfWord(word.address, word.value)
-                waitReady()
-                requireFlashStatus("编程 ${word.address.hexAddress()}")
-                memory.writeWord(StLinkProtocol.ADDR_FLASH_CR, control())
-                written += word.sourceBytes
-                // Keep USB writes cancellable at every half-word without flooding the UI/Room.
-                if (written % 128 == 0L || written == plan.writeBytes) {
-                    onProgress(stage, .45f + .30f * written / plan.writeBytes, "写入 $written/${plan.writeBytes} 字节")
+            if (ramLoader == null) {
+                halfWords(plan.image).forEach { word ->
+                    checkCancelled()
+                    waitReady()
+                    clearFlags()
+                    memory.writeWord(StLinkProtocol.ADDR_FLASH_CR, control() or StLinkProtocol.FLASH_CR_PG.toLong())
+                    memory.writeHalfWord(word.address, word.value)
+                    waitReady()
+                    requireFlashStatus("编程 ${word.address.hexAddress()}")
+                    memory.writeWord(StLinkProtocol.ADDR_FLASH_CR, control())
+                    written += word.sourceBytes
+                    if (written % 128 == 0L || written == plan.writeBytes) {
+                        onProgress(stage, .45f + .30f * written / plan.writeBytes, "写入 $written/${plan.writeBytes} 字节")
+                    }
+                }
+            } else {
+                for (chunk in loaderChunks(plan.image)) {
+                    checkCancelled()
+                    waitReady()
+                    clearFlags()
+                    memory.writeWord(StLinkProtocol.ADDR_FLASH_CR, control() or StLinkProtocol.FLASH_CR_PG.toLong())
+                    ramLoader.program(chunk.first().address, chunk.map { it.value }.toIntArray())
+                    waitReady()
+                    requireFlashStatus("RAM 编程 ${chunk.first().address.hexAddress()}")
+                    memory.writeWord(StLinkProtocol.ADDR_FLASH_CR, control())
+                    written += chunk.sumOf { it.sourceBytes }
+                    onProgress(stage, .45f + .30f * written / plan.writeBytes, "RAM 写入 $written/${plan.writeBytes} 字节")
                 }
             }
             if (options.verifyMode != 2) {
@@ -148,6 +164,18 @@ class F1FlashProgrammer(
             }
         }
         if (current >= 0) yield(HalfWord(current, value, count))
+    }
+
+    private fun loaderChunks(image: FirmwareImage): Sequence<List<HalfWord>> = sequence {
+        var chunk = mutableListOf<HalfWord>()
+        for (word in halfWords(image)) {
+            if (chunk.isNotEmpty() && (chunk.size == F1RamLoader.MAX_HALF_WORDS || word.address != chunk.last().address + 2)) {
+                yield(chunk)
+                chunk = mutableListOf()
+            }
+            chunk += word
+        }
+        if (chunk.isNotEmpty()) yield(chunk)
     }
 
     private fun unlock() {
