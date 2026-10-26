@@ -24,7 +24,7 @@ class UsbProbeMonitor(private val context: Context) {
     private val permissionAction = "${context.packageName}.USB_PERMISSION"
     private val _devices = MutableStateFlow<List<UsbProbe>>(emptyList())
     val devices = _devices.asStateFlow()
-    private val _message = MutableStateFlow("USB 发现与授权；授权后可在工作台点「识别芯片」读真芯片")
+    private val _message = MutableStateFlow("USB 发现与授权；授权后可在设备页或工作台点「识别芯片」读真芯片")
     val message = _message.asStateFlow()
     private val _lastDenied = MutableStateFlow(false)
     /** True after the user denied permission for an ST-LINK candidate that is still attached. */

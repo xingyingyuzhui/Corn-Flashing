@@ -358,7 +358,11 @@ fun DevicesTab(vm: FlashViewModel, devices: List<UsbProbe>) {
 
 @Composable
 private fun DeviceCard(d: UsbProbe, vm: FlashViewModel) {
+    val state by vm.session.collectAsStateWithLifecycle()
+    val prefs = vm.prefs
+    val target = state.target
     val border = if (d.candidate && d.permissionGranted) CornColors.Leaf.copy(alpha = .5f) else CornColors.Line
+    val canProbe = d.candidate && d.permissionGranted && !prefs.simulator && !state.running
     CornCard(Modifier.alpha(if (d.candidate) 1f else .55f), border = border, spacing = 10.dp) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(CornColors.Surface2), contentAlignment = Alignment.Center) {
@@ -381,16 +385,35 @@ private fun DeviceCard(d: UsbProbe, vm: FlashViewModel) {
             }
         }
         if (d.candidate && d.permissionGranted) {
+            val chipText = target?.let { "${it.family} · ${it.flashSizeBytes / 1024} KB" } ?: "—"
+            val uidText = target?.uid ?: "—"
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("目标电压" to "—", "目标芯片" to "—", "绑定" to "工位 1").forEach { (k, v) ->
-                    Column(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(CornColors.Surface2).padding(10.dp)) {
-                        T(k, CornColors.Mute, 10.5.sp); T(v, size = 13.sp, weight = FontWeight.Bold, mono = true)
-                    }
+                Column(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(CornColors.Surface2).padding(10.dp)) {
+                    T("目标电压", CornColors.Mute, 10.5.sp); T("—", size = 13.sp, weight = FontWeight.Bold, mono = true)
+                }
+                Column(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(CornColors.Surface2).padding(10.dp)) {
+                    T("目标芯片", CornColors.Mute, 10.5.sp)
+                    T(chipText, size = 12.sp, weight = FontWeight.Bold, maxLines = 2)
+                    if (target?.uid != null) T(uidText, CornColors.Dim, 10.sp, mono = true, maxLines = 1)
+                }
+                Column(Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(CornColors.Surface2).padding(10.dp)) {
+                    T("绑定", CornColors.Mute, 10.5.sp); T("工位 1", size = 13.sp, weight = FontWeight.Bold, mono = true)
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CornButton("识别芯片", { vm.notify("真实 ST-LINK 通信尚未接入") }, Modifier.weight(1f), height = 40, icon = Lucide.Chip)
-                CornButton("闪灯定位", { vm.notify("真实 ST-LINK 通信尚未接入") }, Modifier.weight(1f), height = 40)
+                CornButton(
+                    if (target == null) "识别芯片" else "重新识别",
+                    {
+                        when {
+                            prefs.simulator -> vm.notify("模拟模式：请到工作台使用演示板，或关闭模拟后再识别真芯片")
+                            !d.permissionGranted -> vm.notify("请先授权 ST-LINK")
+                            state.running -> vm.notify("烧录进行中，稍后再识别")
+                            else -> vm.probeChip()
+                        }
+                    },
+                    Modifier.weight(1f), height = 40, icon = Lucide.Chip, enabled = canProbe,
+                )
+                CornButton("闪灯定位", { vm.notify("闪灯定位尚未接入") }, Modifier.weight(1f), height = 40, enabled = false)
             }
         }
     }
