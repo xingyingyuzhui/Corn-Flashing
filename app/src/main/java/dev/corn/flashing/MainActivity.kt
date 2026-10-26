@@ -30,6 +30,10 @@ class MainActivity : ComponentActivity() {
 
     /** Keep status/nav icons light (white) on our dark charcoal UI, even if the system theme is light. */
     private fun applyLightSystemBarIcons() {
+        // Keep the navigation area transparent, including on three-button devices.
+        // Our full-window Compose background provides contrast for the light controls.
+        window.isNavigationBarContrastEnforced = false
+        window.isStatusBarContrastEnforced = false
         WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = false
             isAppearanceLightNavigationBars = false
