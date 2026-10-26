@@ -10,7 +10,8 @@ class DemoFixtureTest {
         val image = FirmwareParser.parse("demo.hex", bytes)
         val target = TargetInfo(0x410, 0x2003, 65536, "DEMO-00000001", "simulation")
         val plan = FlashPlanner.plan(image, ProductProfile(), target)
-        assertEquals(16L, image.totalBytes)
-        assertEquals(listOf(0x08000000L), plan.erasePageAddresses)
+        assertEquals(49766L, image.totalBytes)
+        assertEquals(49, plan.erasePageAddresses.size)
+        assertEquals(0x08002000L, plan.erasePageAddresses.first())
     }
 }

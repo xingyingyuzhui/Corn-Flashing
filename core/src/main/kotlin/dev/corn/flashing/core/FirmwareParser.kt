@@ -5,11 +5,21 @@ import java.util.Locale
 
 /** Parses data only. It never opens USB or executes firmware. */
 object FirmwareParser {
-    const val MAX_FILE_BYTES = 16 * 1024 * 1024
+    // Largest F1 part is 1 MiB of Flash; 4 MiB leaves room for HEX text overhead.
+    const val MAX_FILE_BYTES = 4 * 1024 * 1024
+
+    fun isBin(name: String): Boolean = name.substringAfterLast('.', "").lowercase(Locale.ROOT) == "bin"
+
+    /** Strict: a typo must be reported, not silently treated as "no address". */
+    fun parseAddress(text: String): Long {
+        val digits = text.trim().removePrefix("0x").removePrefix("0X")
+        val value = digits.takeIf { it.length in 1..8 && it.all { c -> c.digitToIntOrNull(16) != null } }?.toLong(16)
+        return requireNotNull(value) { "BIN 起始地址「${text.trim()}」不是有效的十六进制地址" }
+    }
 
     fun parse(name: String, bytes: ByteArray, binAddress: Long? = null): FirmwareImage {
         require(bytes.isNotEmpty()) { "固件文件为空" }
-        require(bytes.size <= MAX_FILE_BYTES) { "固件超过 16 MB 导入上限" }
+        require(bytes.size <= MAX_FILE_BYTES) { "固件文件最大支持 4 MiB" }
         val suffix = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
         val isElf = bytes.size >= 4 && bytes[0] == 0x7f.toByte() &&
             bytes[1] == 'E'.code.toByte() && bytes[2] == 'L'.code.toByte() && bytes[3] == 'F'.code.toByte()
