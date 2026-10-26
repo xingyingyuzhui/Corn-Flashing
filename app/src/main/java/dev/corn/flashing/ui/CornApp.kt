@@ -173,10 +173,11 @@ fun CornApp(vm: FlashViewModel) {
                         onStarted = { page = Page.NONE; tab = 0; batchMode = true },
                         withNotifications = withNotifications)
                 }
-                else -> Scaffold(
+                else -> Box(Modifier.fillMaxSize()) {
+                  Scaffold(
                     containerColor = CornColors.Background,
-                    bottomBar = { BottomNav(tab) { tab = it } },
                 ) { padding ->
+                  CompositionLocalProvider(LocalDockClearance provides DockClearance) {
                     Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                         when (tab) {
                             0 -> Workbench(vm, state, history, devices, batchMode, sim,
@@ -193,6 +194,9 @@ fun CornApp(vm: FlashViewModel) {
                             4 -> RecordsTab(vm, history, onExport = { exporter.launch("corn-flashing-records.json") })
                         }
                     }
+                  }
+                  }
+                  Box(Modifier.align(Alignment.BottomCenter)) { BottomNav(tab) { tab = it } }
                 }
             }
             if (notice != null) {
@@ -232,13 +236,17 @@ private fun FinishFeedback(vm: FlashViewModel, state: SessionState) {
 
 // ---------------------------------------------------------------- nav
 
+// Only tab pages reserve scrollable trailing space for the overlay; detail pages have no dock.
+val LocalDockClearance = staticCompositionLocalOf { 0.dp }
+private val DockClearance = 88.dp // Island height (68) plus its outer vertical spacing (20).
+
 @Composable
 private fun BottomNav(tab: Int, onTab: (Int) -> Unit) {
     val items = listOf(Lucide.Bolt to "工作台", Lucide.File to "固件", Lucide.Sliders to "配置", Lucide.Usb to "设备", Lucide.List to "记录")
-    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp),
+    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 32.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center) {
         Surface(
-            modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth(),
+            modifier = Modifier.widthIn(max = 460.dp).fillMaxWidth(),
             shape = RoundedCornerShape(28.dp),
             color = CornColors.Surface2,
             border = BorderStroke(1.dp, CornColors.Line),
@@ -264,7 +272,8 @@ private fun BottomNav(tab: Int, onTab: (Int) -> Unit) {
 
 @Composable
 fun ScrollBody(modifier: Modifier = Modifier, spacing: Int = 12, content: @Composable ColumnScope.() -> Unit) {
-    Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 20.dp),
+    Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+        .padding(start = 16.dp, end = 16.dp, bottom = 20.dp + LocalDockClearance.current),
         verticalArrangement = Arrangement.spacedBy(spacing.dp), content = content)
 }
 

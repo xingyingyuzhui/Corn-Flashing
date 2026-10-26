@@ -68,7 +68,8 @@ fun FirmwareTab(vm: FlashViewModel, state: SessionState, binAddress: String, onA
                 Spacer(Modifier.height(64.dp))
             }
         }
-        if (fw != null) Row(Modifier.align(Alignment.BottomEnd).padding(end = 18.dp, bottom = 18.dp).height(54.dp)
+        if (fw != null) Row(Modifier.align(Alignment.BottomEnd)
+            .padding(end = 18.dp, bottom = 18.dp + LocalDockClearance.current).height(54.dp)
             .clip(RoundedCornerShape(18.dp)).background(CornColors.Corn).clickable(enabled = !state.importing, onClick = onPick)
             .padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Ico(Lucide.Plus, CornColors.CornOn, 20.dp)
