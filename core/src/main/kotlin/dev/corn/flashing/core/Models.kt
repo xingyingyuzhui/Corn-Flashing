@@ -1,5 +1,7 @@
 package dev.corn.flashing.core
 
+import java.security.MessageDigest
+
 enum class FirmwareFormat { HEX, BIN, ELF, AXF }
 
 data class FirmwareSegment(val address: Long, val data: ByteArray) {
@@ -30,7 +32,31 @@ data class ProductProfile(
     val pageSize: Int = 1024,
     val reservedRanges: List<AddressRange> = emptyList(),
     val expectedDeviceIds: Set<Int> = setOf(0x410),
-)
+) {
+    /**
+     * Stable hash of every field that affects erase/write decisions.
+     * Used to block batch resume when the profile id is unchanged but its content is not.
+     */
+    val configSha256: String get() {
+        val canonical = buildString {
+            append("id=").append(id).append('\n')
+            append("name=").append(name).append('\n')
+            append("flashStart=").append(flashStart).append('\n')
+            append("flashSizeBytes=").append(flashSizeBytes).append('\n')
+            append("pageSize=").append(pageSize).append('\n')
+            append("reserved=")
+            reservedRanges.sortedWith(compareBy({ it.start }, { it.endExclusive })).forEach {
+                append(it.start).append('-').append(it.endExclusive).append(';')
+            }
+            append('\n')
+            append("devices=")
+            expectedDeviceIds.sorted().joinTo(this, ",")
+            append('\n')
+        }
+        return MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    }
+}
 
 data class TargetInfo(
     val deviceId: Int,

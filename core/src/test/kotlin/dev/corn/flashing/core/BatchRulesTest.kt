@@ -130,4 +130,29 @@ class BatchRulesTest {
             assertTrue(error.message!!.contains("不是有效的十六进制地址"))
         }
     }
+
+    @Test fun resumeBlockedWhenProfileContentChangesEvenIfIdStaysTheSame() {
+        val a = ProductProfile(id = "f103-64k", reservedRanges = emptyList())
+        val b = ProductProfile(id = "f103-64k", reservedRanges = listOf(AddressRange(0x08000000, 0x08002000)))
+        assertNotEquals(a.configSha256, b.configSha256)
+        val frozen = BatchFingerprint("fw", a.configSha256)
+        assertNull(BatchRules.resumeBlock(frozen, BatchFingerprint("fw", a.configSha256)))
+        assertEquals(BatchResumeBlock.PROFILE_CHANGED,
+            BatchRules.resumeBlock(frozen, BatchFingerprint("fw", b.configSha256)))
+        assertEquals(BatchResumeBlock.FIRMWARE_CHANGED,
+            BatchRules.resumeBlock(frozen, BatchFingerprint("other", a.configSha256)))
+        assertEquals(BatchResumeBlock.NO_FIRMWARE, BatchRules.resumeBlock(frozen, null))
+    }
+
+    @Test fun configSha256IsStableAcrossFieldOrderOfSetsAndRanges() {
+        val left = ProductProfile(
+            reservedRanges = listOf(AddressRange(0x0800F800, 0x08010000), AddressRange(0x08000000, 0x08002000)),
+            expectedDeviceIds = setOf(0x414, 0x410),
+        )
+        val right = ProductProfile(
+            reservedRanges = listOf(AddressRange(0x08000000, 0x08002000), AddressRange(0x0800F800, 0x08010000)),
+            expectedDeviceIds = setOf(0x410, 0x414),
+        )
+        assertEquals(left.configSha256, right.configSha256)
+    }
 }

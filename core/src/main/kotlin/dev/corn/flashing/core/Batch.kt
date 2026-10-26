@@ -59,8 +59,8 @@ enum class BatchStop { COMPLETED, TOO_MANY_FAILURES }
 /** Why a restored batch cannot simply continue. */
 enum class BatchResumeBlock { NO_FIRMWARE, FIRMWARE_CHANGED, PROFILE_CHANGED }
 
-/** Inputs frozen into a batch when it was created. */
-data class BatchFingerprint(val sha256: String, val profileId: String)
+/** Inputs frozen into a batch when it was created. [configSha256] is [ProductProfile.configSha256]. */
+data class BatchFingerprint(val sha256: String, val configSha256: String)
 
 object BatchRules {
     fun tally(rows: List<BoardRow>): BatchTally {
@@ -113,7 +113,7 @@ object BatchRules {
     fun resumeBlock(batch: BatchFingerprint, current: BatchFingerprint?): BatchResumeBlock? = when {
         current == null -> BatchResumeBlock.NO_FIRMWARE
         current.sha256 != batch.sha256 -> BatchResumeBlock.FIRMWARE_CHANGED
-        current.profileId != batch.profileId -> BatchResumeBlock.PROFILE_CHANGED
+        current.configSha256 != batch.configSha256 -> BatchResumeBlock.PROFILE_CHANGED
         else -> null
     }
 }

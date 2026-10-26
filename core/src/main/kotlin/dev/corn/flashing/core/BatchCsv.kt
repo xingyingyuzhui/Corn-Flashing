@@ -17,6 +17,7 @@ object BatchCsv {
     /**
      * One line per board. Time is supplied by the caller so tests do not depend on the host time zone.
      * The BOM keeps Excel from mis-decoding the Chinese headings.
+     * Cells that look like spreadsheet formulas are neutralized with a leading apostrophe.
      */
     fun render(rows: List<BatchCsvRow>, timestamp: (Long) -> String): String = buildString {
         append('\uFEFF')
@@ -37,10 +38,14 @@ object BatchCsv {
         }
     }
 
-    private fun escape(value: String): String =
-        if (value.any { it == ',' || it == '"' || it == '\n' || it == '\r' }) {
-            "\"" + value.replace("\"", "\"\"") + "\""
+    internal fun escape(value: String): String {
+        val safe = if (value.isNotEmpty() && value[0] in FORMULA_PREFIX) "'$value" else value
+        return if (safe.any { it == ',' || it == '"' || it == '\n' || it == '\r' }) {
+            "\"" + safe.replace("\"", "\"\"") + "\""
         } else {
-            value
+            safe
         }
+    }
+
+    private val FORMULA_PREFIX = charArrayOf('=', '+', '-', '@', '\t')
 }
