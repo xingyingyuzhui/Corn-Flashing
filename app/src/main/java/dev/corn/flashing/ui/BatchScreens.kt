@@ -186,7 +186,8 @@ private fun PausedPanel(view: BatchView) {
 
 @Composable
 fun NewBatchScreen(vm: FlashViewModel, state: SessionState, devices: List<UsbProbe>, onBack: () -> Unit,
-                   onGoFirmware: () -> Unit, onStarted: () -> Unit) {
+                   onGoFirmware: () -> Unit, onStarted: () -> Unit,
+                   withNotifications: (() -> Unit) -> Unit = { it() }) {
     var workOrder by rememberSaveable { mutableStateOf("WO-" + java.text.SimpleDateFormat("MMdd", java.util.Locale.getDefault()).format(java.util.Date()) + "-A") }
     var planned by rememberSaveable { mutableIntStateOf(20) }
     var skipDup by rememberSaveable { mutableStateOf(true) }
@@ -252,7 +253,7 @@ fun NewBatchScreen(vm: FlashViewModel, state: SessionState, devices: List<UsbPro
                     runCatching {
                         BatchConfig(workOrder, planned, if (skipDup) DuplicatePolicy.SKIP_AND_WARN else DuplicatePolicy.ALLOW,
                             pauseAfter, if (serialOn) SerialFormat() else null)
-                    }.onSuccess { vm.startBatch(it, vm.prefs.injectFaults, onStarted) }.onFailure { vm.notify(it.message ?: "参数无效") }
+                    }.onSuccess { cfg -> withNotifications { vm.startBatch(cfg, vm.prefs.injectFaults, onStarted) } }.onFailure { vm.notify(it.message ?: "参数无效") }
                 })
         }
     }

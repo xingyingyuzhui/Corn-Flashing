@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import dev.corn.flashing.core.*
 import kotlinx.coroutines.*
+
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -162,7 +163,16 @@ class FlashRepository(private val context: Context, private val dao: FlashDao) {
             message = "正在保存任务，不操作 USB 设备", target = null, plan = null, job = record) }
         try {
             dao.saveJob(record)
+            pruneHistory()
             _state.update { it.copy(stage = "等待启动", message = "模拟任务已排队，不操作 USB 设备") }
+            val watchdogId = record.id
+            scope.launch {
+                delay(LAUNCH_WATCHDOG_MS)
+                val still = pending?.first
+                if (still?.id == watchdogId && _state.value.running) {
+                    startFailed("任务服务未在时限内启动，已取消排队")
+                }
+            }
             return record.id
         } catch (cancelled: CancellationException) {
             withContext(NonCancellable) { startFailed("排队操作已取消") }
@@ -219,7 +229,7 @@ class FlashRepository(private val context: Context, private val dao: FlashDao) {
         } finally {
             record = record.copy(finishedAt = System.currentTimeMillis())
             try {
-                withContext(NonCancellable + Dispatchers.IO) { dao.saveJob(record) }
+                withContext(NonCancellable + Dispatchers.IO) { dao.saveJob(record); pruneHistory() }
             } catch (error: Exception) {
                 record = record.copy(message = "记录保存失败：${error.message}；请勿将本次任务视为已归档")
             }
@@ -245,7 +255,15 @@ class FlashRepository(private val context: Context, private val dao: FlashDao) {
             ?: error("无法写入导出文件")
     }
 
+    private suspend fun pruneHistory() {
+        val over = dao.jobCount() - MAX_JOBS
+        if (over > 0) dao.deleteOldestJobs(over)
+    }
+
     companion object {
+        private const val MAX_JOBS = 10_000
+        /** How long a prepared job may sit before the service must have claimed it. */
+        private const val LAUNCH_WATCHDOG_MS = 8_000L
         fun stageLabel(stage: FlashStage) = when (stage) {
             FlashStage.CONNECTING -> "连接探针"
             FlashStage.PROBING -> "识别芯片"

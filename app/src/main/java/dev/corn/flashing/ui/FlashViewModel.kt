@@ -1,8 +1,12 @@
 package dev.corn.flashing.ui
 
+import android.Manifest
 import android.app.Application
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.corn.flashing.CornApplication
@@ -21,6 +25,7 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     val history = repository.history
     val devices = app.usb.devices
     val usbMessage = app.usb.message
+    val usbDenied = app.usb.lastDenied
     val hostSupported = app.usb.hostSupported
     val profile = repository.profile
     val prefs = Prefs(application)
@@ -32,6 +37,10 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     /** Set when a batch has ended; the UI opens its report. */
     private val _report = MutableStateFlow<String?>(null)
     val report = _report.asStateFlow()
+    private val _needNotificationPermission = MutableStateFlow(false)
+    val needNotificationPermission = _needNotificationPermission.asStateFlow()
+
+    init { refreshNotificationPermission() }
 
     fun clearNotice() { _notice.value = null }
     fun notify(message: String) { _notice.value = message }
@@ -45,6 +54,37 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     fun authorize(id: Int) {
         try { app.usb.requestPermission(id) }
         catch (error: Exception) { _notice.value = "USB 授权失败：${error.message}" }
+    }
+    fun authorizeDenied() {
+        try { app.usb.requestPermissionForDenied() }
+        catch (error: Exception) { _notice.value = "USB 授权失败：${error.message}" }
+    }
+
+    fun notificationsGranted(): Boolean {
+        if (Build.VERSION.SDK_INT < 33) return true
+        return ContextCompat.checkSelfPermission(app, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+
+    fun refreshNotificationPermission() {
+        _needNotificationPermission.value = Build.VERSION.SDK_INT >= 33 && !notificationsGranted()
+    }
+
+    fun onNotificationPermissionResult(granted: Boolean) {
+        _needNotificationPermission.value = Build.VERSION.SDK_INT >= 33 && !granted
+        if (!granted) _notice.value = "未授予通知权限：烧录进行中时通知栏看不到进度和取消按钮"
+    }
+
+    /**
+     * Ensures notification permission is settled before starting work on API 33+.
+     * Returns true when the caller should proceed; false when a permission prompt was launched.
+     */
+    fun ensureNotificationsThen(request: () -> Unit, proceed: () -> Unit) {
+        if (notificationsGranted()) {
+            proceed()
+        } else {
+            request()
+        }
     }
 
     fun startSingle() {
@@ -87,7 +127,13 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     fun pauseBatch() = batches.pause()
     fun resumeBatch() { viewModelScope.launch { batches.resume()?.let { _notice.value = it } } }
     fun dismissResumeOffer() = batches.dismissResumeOffer()
-    fun endBatch() { viewModelScope.launch { _report.value = batches.end() } }
+    fun endBatch() {
+        viewModelScope.launch {
+            val id = batches.end()
+            if (id != null) _report.value = id
+            else batches.active.value?.notice?.let { _notice.value = it }
+        }
+    }
     fun batchRows(id: String) = batches.rows(id)
     fun batchById(id: String) = batches.batch(id)
     fun batchConfig(entity: dev.corn.flashing.storage.BatchEntity) = batches.config(entity)

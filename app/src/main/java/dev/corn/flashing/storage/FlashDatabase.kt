@@ -12,7 +12,7 @@ data class FirmwareEntity(
     val binAddress: Long?,
 )
 
-@Entity(tableName = "jobs", indices = [Index("batchId")])
+@Entity(tableName = "jobs", indices = [Index("batchId"), Index("startedAt")])
 data class JobEntity(
     @PrimaryKey val id: String,
     val firmwareName: String,
@@ -53,6 +53,8 @@ data class BatchEntity(
     val sha256: String,
     val profileId: String,
     val profileName: String,
+    /** [dev.corn.flashing.core.ProductProfile.configSha256] frozen when the batch started. */
+    @ColumnInfo(defaultValue = "") val configSha256: String = "",
     val mode: String = "DEMO",
     val injectFaults: Boolean = false,
     val status: String = BatchStatus.RUNNING,
@@ -69,7 +71,7 @@ interface FlashDao {
     suspend fun saveFirmware(value: FirmwareEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveJob(value: JobEntity)
-    @Query("SELECT * FROM jobs ORDER BY startedAt DESC LIMIT 100")
+    @Query("SELECT * FROM jobs ORDER BY startedAt DESC LIMIT 10000")
     fun recentJobs(): Flow<List<JobEntity>>
     @Query("SELECT * FROM jobs ORDER BY startedAt DESC")
     suspend fun allJobs(): List<JobEntity>
@@ -77,6 +79,14 @@ interface FlashDao {
     suspend fun unfinishedJobs(): List<JobEntity>
     @Query("UPDATE jobs SET status = 'INTERRUPTED', stage = '任务中断', message = '应用进程已终止；这块板的程序可能不完整，需要重新烧录', finishedAt = :now WHERE status IN ('QUEUED', 'RUNNING')")
     suspend fun recoverInterrupted(now: Long)
+    @Query("SELECT COUNT(*) FROM jobs")
+    suspend fun jobCount(): Int
+    @Query("DELETE FROM jobs WHERE id IN (SELECT id FROM jobs ORDER BY startedAt ASC LIMIT :count)")
+    suspend fun deleteOldestJobs(count: Int)
+    @Query("SELECT COUNT(*) FROM jobs WHERE startedAt >= :from AND startedAt < :to AND status IN ('SIMULATED','SUCCEEDED')")
+    suspend fun countSucceededBetween(from: Long, to: Long): Int
+    @Query("SELECT COUNT(*) FROM jobs WHERE startedAt >= :from AND startedAt < :to AND status = 'FAILED'")
+    suspend fun countFailedBetween(from: Long, to: Long): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveBatch(value: BatchEntity)
@@ -94,8 +104,11 @@ interface FlashDao {
 
 @Database(
     entities = [FirmwareEntity::class, JobEntity::class, BatchEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = true,
-    autoMigrations = [AutoMigration(from = 1, to = 2)],
+    autoMigrations = [
+        AutoMigration(from = 1, to = 2),
+        AutoMigration(from = 2, to = 3),
+    ],
 )
 abstract class FlashDatabase : RoomDatabase() { abstract fun dao(): FlashDao }

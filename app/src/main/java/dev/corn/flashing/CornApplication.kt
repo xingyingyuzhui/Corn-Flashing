@@ -44,7 +44,12 @@ class CornApplication : Application() {
                 false
             }
         }
-        batches = BatchController(this, database.dao(), repository, launcher, foreground)
+        batches = BatchController(
+            this, database.dao(), repository, launcher, foreground,
+            cancelRunning = {
+                startService(Intent(this, FlashService::class.java).setAction(FlashService.ACTION_CANCEL))
+            },
+        )
     }
 
     private inner class ForegroundTracker : ActivityLifecycleCallbacks {

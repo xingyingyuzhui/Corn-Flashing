@@ -27,22 +27,12 @@ class FlashService : Service() {
             if (active == null) stopSelf()
             return START_NOT_STICKY
         }
-        if (active?.isActive == true) return START_NOT_STICKY
-        val id = intent?.getStringExtra(EXTRA_JOB_ID) ?: run { stopSelf(); return START_NOT_STICKY }
-        val notifications = getSystemService(NotificationManager::class.java)
-        notifications.createNotificationChannel(NotificationChannel(CHANNEL, "烧录任务", NotificationManager.IMPORTANCE_LOW))
-        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-        val cancel = PendingIntent.getService(this, 0, Intent(this, FlashService::class.java).setAction(ACTION_CANCEL), PendingIntent.FLAG_IMMUTABLE)
-        val notification = Notification.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_stat_corn)
-            .setContentTitle("Corn Flashing · 模拟烧录")
-            .setContentText("正在演示烧录流程，不操作真实芯片")
-            .setContentIntent(open).setOngoing(true)
-            .addAction(Notification.Action.Builder(null, "取消", cancel).build()).build()
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE)
-        } else {
-            startForeground(1, notification)
+        val id = intent?.getStringExtra(EXTRA_JOB_ID)
+        // Always enter the foreground promptly; Android crashes the app if startForeground is skipped.
+        promote(idle = id == null || active?.isActive == true)
+        if (id == null || active?.isActive == true) {
+            if (active?.isActive != true) stopSelf()
+            return START_NOT_STICKY
         }
         active = scope.launch {
             try { repository.runJob(id) }
@@ -52,6 +42,24 @@ class FlashService : Service() {
             }
         }
         return START_NOT_STICKY
+    }
+
+    private fun promote(idle: Boolean) {
+        val notifications = getSystemService(NotificationManager::class.java)
+        notifications.createNotificationChannel(NotificationChannel(CHANNEL, "烧录任务", NotificationManager.IMPORTANCE_LOW))
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val cancel = PendingIntent.getService(this, 0, Intent(this, FlashService::class.java).setAction(ACTION_CANCEL), PendingIntent.FLAG_IMMUTABLE)
+        val notification = Notification.Builder(this, CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_corn)
+            .setContentTitle(if (idle) "Corn Flashing" else "Corn Flashing · 模拟烧录")
+            .setContentText(if (idle) "任务服务已启动" else "正在演示烧录流程，不操作真实芯片")
+            .setContentIntent(open).setOngoing(!idle)
+            .addAction(Notification.Action.Builder(null, "取消", cancel).build()).build()
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE)
+        } else {
+            startForeground(1, notification)
+        }
     }
 
     /** shortService time limit reached (API 34). Stopping records the board as cancelled, never as succeeded. */

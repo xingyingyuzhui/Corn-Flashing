@@ -92,6 +92,28 @@ fun CornApp(vm: FlashViewModel) {
     DisposableEffect(prefs.keepScreenOn) { view.keepScreenOn = prefs.keepScreenOn; onDispose { } }
     FinishFeedback(vm, state)
 
+    val pendingStart = remember { mutableStateOf<(() -> Unit)?>(null) }
+    val notifPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        vm.onNotificationPermissionResult(granted)
+        val next = pendingStart.value
+        pendingStart.value = null
+        // Proceed even when denied so flashing still works; the notice explains the trade-off.
+        next?.invoke()
+    }
+    val withNotifications: (() -> Unit) -> Unit = { block ->
+        vm.ensureNotificationsThen(
+            request = {
+                pendingStart.value = block
+                if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                } else block()
+            },
+            proceed = block,
+        )
+    }
+
     CornTheme {
         val sim = prefs.simulator
         Box(Modifier.fillMaxSize().background(CornColors.Background)) {
@@ -116,11 +138,12 @@ fun CornApp(vm: FlashViewModel) {
                 page == Page.NEW_BATCH && batch == null -> {
                     BackHandler { page = Page.NONE }
                     NewBatchScreen(vm, state, devices, onBack = { page = Page.NONE },
-                        onGoFirmware = { page = Page.NONE; tab = 1 }, onStarted = { page = Page.NONE; tab = 0; batchMode = true })
+                        onGoFirmware = { page = Page.NONE; tab = 1 },
+                        onStarted = { page = Page.NONE; tab = 0; batchMode = true },
+                        withNotifications = withNotifications)
                 }
                 else -> Scaffold(
                     containerColor = CornColors.Background,
-                    snackbarHost = { SnackbarHost(snackbar) },
                     bottomBar = { BottomNav(tab) { tab = it } },
                 ) { padding ->
                     Column(Modifier.fillMaxSize().padding(padding).statusBarsPadding()) {
@@ -130,7 +153,7 @@ fun CornApp(vm: FlashViewModel) {
                                     if (!wanted && batch != null) vm.notify("批次未结束：结束批次后才能切回单路") else batchMode = wanted
                                 },
                                 onSettings = { page = Page.SETTINGS }, onGoFirmware = { tab = 1 },
-                                onStart = { vm.startSingle(); page = Page.FLOW },
+                                onStart = { withNotifications { vm.startSingle(); page = Page.FLOW } },
                                 onNewBatch = { page = Page.NEW_BATCH })
                             1 -> FirmwareTab(vm, state, binAddress, { binAddress = it },
                                 onPick = { picker.launch(arrayOf("*/*")) }, onDetail = { page = Page.FIRMWARE_DETAIL })
@@ -141,8 +164,9 @@ fun CornApp(vm: FlashViewModel) {
                     }
                 }
             }
+            SnackbarHost(snackbar, modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
+            offer?.let { ResumeSheet(it, vm) }
         }
-        offer?.let { ResumeSheet(it, vm) }
     }
 }
 
@@ -150,15 +174,18 @@ fun CornApp(vm: FlashViewModel) {
 @Composable
 private fun FinishFeedback(vm: FlashViewModel, state: SessionState) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var lastId by remember { mutableStateOf<String?>(null) }
+    // Seed with the job already in memory so a restored row does not beep; the first new finish still does.
+    var lastId by remember { mutableStateOf(state.job?.id) }
     LaunchedEffect(state.job?.id, state.running) {
         val job = state.job ?: return@LaunchedEffect
         if (state.running || job.finishedAt == null || job.id == lastId) return@LaunchedEffect
-        if (lastId == null) { lastId = job.id; return@LaunchedEffect } // do not beep for a restored job
         lastId = job.id
         if (job.status in listOf("SIMULATED", "SUCCEEDED") && vm.prefs.successTone) runCatching {
-            android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 80)
-                .startTone(android.media.ToneGenerator.TONE_PROP_ACK, 200)
+            val tone = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 80)
+            try {
+                tone.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 200)
+                kotlinx.coroutines.delay(220)
+            } finally { tone.release() }
         }
         if (job.status == "FAILED" && vm.prefs.vibrateOnFail) runCatching {
             val vibrator = context.getSystemService(android.os.Vibrator::class.java)

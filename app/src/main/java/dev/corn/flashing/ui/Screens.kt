@@ -319,6 +319,12 @@ fun DevicesTab(vm: FlashViewModel, devices: List<UsbProbe>) {
                 HintRow("3", "换一根线", "只能充电的线没有数据线芯")
                 HintRow("4", "供电是否足够", "多个设备时用带供电的 USB Hub", last = true)
             }
+            T(usbMessage, CornColors.Mute, 11.sp)
+        }
+        devices.forEach { DeviceCard(it, vm) }
+        val denied by vm.usbDenied.collectAsStateWithLifecycle()
+        val hasUnauthorizedCandidate = devices.any { it.candidate && !it.permissionGranted }
+        if (denied && hasUnauthorizedCandidate) {
             CornCard(spacing = 8.dp) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Box(Modifier.size(36.dp).clip(RoundedCornerShape(11.dp)).background(CornColors.Surface2), contentAlignment = Alignment.Center) {
@@ -326,14 +332,12 @@ fun DevicesTab(vm: FlashViewModel, devices: List<UsbProbe>) {
                     }
                     Column(Modifier.weight(1f)) {
                         T("上次拒绝了 USB 授权", size = 14.sp, weight = FontWeight.SemiBold)
-                        T("拔下重插 ST-LINK，系统会再次询问", CornColors.Dim, 11.5.sp)
+                        T("点重新授权，系统会再次询问", CornColors.Dim, 11.5.sp)
                     }
-                    Chip("重新授权", ChipTone.WARN, onClick = vm::refreshUsb)
+                    Chip("重新授权", ChipTone.WARN, onClick = vm::authorizeDenied)
                 }
             }
-            T(usbMessage, CornColors.Mute, 11.sp)
         }
-        devices.forEach { DeviceCard(it, vm) }
         WiringCard()
     }
 }
@@ -538,6 +542,10 @@ fun SettingsScreen(vm: FlashViewModel, onBack: () -> Unit, onExport: () -> Unit)
                 SRow("成功提示音") { CornToggle(prefs.successTone) { prefs.successTone = it } }
                 SRow("失败时震动") { CornToggle(prefs.vibrateOnFail) { prefs.vibrateOnFail = it } }
                 SRow("保持屏幕常亮", "产线上不用反复解锁", last = true) { CornToggle(prefs.keepScreenOn) { prefs.keepScreenOn = it } }
+            }
+            val needNotif by vm.needNotificationPermission.collectAsStateWithLifecycle()
+            if (needNotif) {
+                Banner("通知权限未开启", "烧录时通知栏看不到进度和取消按钮；请到系统设置里允许通知。", tone = ChipTone.WARN)
             }
             Label("数据")
             Group {

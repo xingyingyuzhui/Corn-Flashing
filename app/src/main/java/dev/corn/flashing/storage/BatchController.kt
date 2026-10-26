@@ -88,7 +88,8 @@ class BatchController(
             id = UUID.randomUUID().toString(), workOrder = config.workOrder.trim(), planned = config.planned,
             duplicatePolicy = config.duplicatePolicy.name, pauseAfterFailures = config.pauseAfterFailures,
             serialPrefix = config.serial?.prefix, serialStart = config.serial?.start ?: 1, serialDigits = config.serial?.digits ?: 6,
-            firmwareName = firmware.name, sha256 = firmware.image.sourceSha256, profileId = profile.id, profileName = profile.name,
+            firmwareName = firmware.name, sha256 = firmware.image.sourceSha256,
+            profileId = profile.id, profileName = profile.name, configSha256 = profile.configSha256,
             injectFaults = injectFaults, startedAt = System.currentTimeMillis(),
         )
         withContext(Dispatchers.IO) { dao.saveBatch(batch) }
@@ -120,15 +121,23 @@ class BatchController(
 
     fun clearNotice() { _active.update { it?.copy(notice = null) } }
 
-    /** Ends the batch (completed or not) and returns its id for the report. */
+    /**
+     * Ends the batch and returns its id for the report.
+     * If a board is still flashing, cancels it and waits until the final row is persisted.
+     * Returns null and leaves the batch active when that wait times out.
+     */
     suspend fun end(): String? {
         val view = _active.value ?: return null
-        // Stop the board in flight so its final row is stored before the report is opened.
         if (repository.state.value.running) {
             cancelRunning()
-            withTimeoutOrNull(6_000) { repository.state.first { !it.running } }
+            val settled = withTimeoutOrNull(8_000) { repository.state.first { !it.running } }
+            if (settled == null) {
+                _active.update { it?.copy(notice = "结束失败：当前板仍在烧录，请稍后再试或长按中止") }
+                return null
+            }
         }
         loop?.cancel()
+        loop = null
         val status = if (view.phase == BatchPhase.FINISHED) BatchStatus.COMPLETED else BatchStatus.ENDED
         val ended = view.batch.copy(status = status, endedAt = view.batch.endedAt ?: System.currentTimeMillis())
         withContext(Dispatchers.IO) { dao.saveBatch(ended) }
@@ -142,11 +151,14 @@ class BatchController(
 
     private fun blocker(batch: BatchEntity): String? {
         val firmware = repository.state.value.firmware
-        return when {
-            firmware == null -> "当前没有固件，无法继续；只能结束此批次"
-            firmware.image.sourceSha256 != batch.sha256 -> "固件已更换（SHA 不同），不能继续；请结束此批次后另开一批"
-            repository.profile.id != batch.profileId -> "产品配置已更换，不能继续；请结束此批次后另开一批"
-            else -> null
+        val current = firmware?.let {
+            BatchFingerprint(it.image.sourceSha256, repository.profile.configSha256)
+        }
+        return when (BatchRules.resumeBlock(BatchFingerprint(batch.sha256, batch.configSha256), current)) {
+            BatchResumeBlock.NO_FIRMWARE -> "当前没有固件，无法继续；只能结束此批次"
+            BatchResumeBlock.FIRMWARE_CHANGED -> "固件已更换（SHA 不同），不能继续；请结束此批次后另开一批"
+            BatchResumeBlock.PROFILE_CHANGED -> "产品配置已更换，不能继续；请结束此批次后另开一批"
+            null -> null
         }
     }
 
@@ -242,17 +254,16 @@ class BatchController(
     suspend fun exportCsv(batchId: String, uri: Uri) = withContext(Dispatchers.IO) {
         val rows = dao.batchJobsNow(batchId)
         val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT)
-        val text = buildString {
-            append("﻿序号,工位,UID,序列号,结果,用时(ms),阶段,说明,开始时间\n")
-            rows.forEach { row ->
-                val duration = row.finishedAt?.let { it - row.startedAt }?.toString().orEmpty()
-                listOf(row.seq?.toString().orEmpty(), "工位 1", row.targetUid.orEmpty(), row.serial.orEmpty(), statusLabel(row.status),
-                    duration, row.stage, row.message, time.format(Date(row.startedAt)))
-                    .joinTo(this, ",") { csv(it) }
-                append('\n')
-            }
-        }
-        context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(text.toByteArray()) } ?: error("无法写入导出文件")
+        val text = BatchCsv.render(rows.map { row ->
+            BatchCsvRow(
+                seq = row.seq, station = "工位 1", uid = row.targetUid, serial = row.serial,
+                result = statusLabel(row.status),
+                durationMillis = row.finishedAt?.let { it - row.startedAt },
+                stage = row.stage, message = row.message, startedAt = row.startedAt,
+            )
+        }) { time.format(Date(it)) }
+        context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+            ?: error("无法写入导出文件")
     }
 
     companion object {
@@ -271,8 +282,5 @@ class BatchController(
             "RUNNING" -> "执行中"
             else -> "排队中"
         }
-
-        private fun csv(value: String): String =
-            if (value.any { it == ',' || it == '"' || it == '\n' }) "\"" + value.replace("\"", "\"\"") + "\"" else value
     }
 }
