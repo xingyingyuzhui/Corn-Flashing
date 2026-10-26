@@ -166,7 +166,7 @@ fun CornApp(vm: FlashViewModel) {
                 }
                 page == Page.FIRMWARE_DETAIL && state.firmware != null -> {
                     BackHandler { page = Page.NONE }
-                    FirmwareDetailScreen(state.firmware!!, effectiveProfile(state, vm), effectiveTarget(state, vm), onBack = { page = Page.NONE })
+                    FirmwareDetailScreen(state.firmware!!, effectiveProfile(state, vm), effectiveTarget(state, vm), onBack = { page = Page.NONE }, registry = vm.targetRegistry)
                 }
                 page == Page.NEW_BATCH && batch == null -> {
                     BackHandler { page = Page.NONE }
@@ -287,6 +287,8 @@ private fun Workbench(
     batchMode: Boolean, sim: Boolean, onMode: (Boolean) -> Unit, onSettings: () -> Unit, onGoFirmware: () -> Unit,
     onStart: () -> Unit, onNewBatch: () -> Unit,
 ) {
+    val bindings by vm.algorithmBindings.collectAsStateWithLifecycle()
+    val targetRegistry = remember(bindings) { vm.targetRegistry }
     val batch by vm.batch.collectAsStateWithLifecycle()
     val probe = devices.firstOrNull { it.candidate }
     val probeOk = sim || probe?.permissionGranted == true
@@ -324,7 +326,7 @@ private fun Workbench(
                 },
                 when {
                     sim -> CornColors.Leaf
-                    state.target != null && TargetCatalog.find(state.target.deviceId)?.support == TargetSupport.FLASH_ALGORITHM -> CornColors.Leaf
+                    state.target != null && targetRegistry.find(state.target.deviceId)?.support == TargetSupport.FLASH_ALGORITHM -> CornColors.Leaf
                     state.target != null -> CornColors.Corn
                     else -> CornColors.Red
                 },
@@ -355,7 +357,7 @@ private fun Workbench(
             )
         }
         if (!sim) state.target?.let { target ->
-            val descriptor = TargetCatalog.find(target.deviceId)
+            val descriptor = vm.targetRegistry.find(target.deviceId)
             val programmable = descriptor?.support == TargetSupport.FLASH_ALGORITHM
             CornCard(spacing = 6.dp) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -368,7 +370,7 @@ private fun Workbench(
         }
         FirmwareCard(state.firmware, effectiveProfile(state, vm), onGoFirmware, vm)
         val firmware = state.firmware
-        val preflight = firmware?.let { FirmwarePreflight.inspect(it.image, effectiveProfile(state, vm), effectiveTarget(state, vm)) }
+        val preflight = firmware?.let { FirmwarePreflight.inspect(it.image, effectiveProfile(state, vm), effectiveTarget(state, vm), if (sim) TargetCatalog.registry else vm.targetRegistry) }
         val pages = firmware?.takeIf { preflight?.targetKnown == true && preflight.canStart }?.let { erasePages(it, effectiveProfile(state, vm)) }
         CornButton("开始烧录", onStart, Modifier.fillMaxWidth(), primary = true, height = 64, radius = 20, icon = Lucide.Bolt,
             enabled = state.ready && !state.importing && firmware != null && !state.running && !state.probing && preflight?.canStart == true,
@@ -426,7 +428,7 @@ fun effectiveTarget(state: SessionState, vm: FlashViewModel): TargetInfo? =
 
 fun effectiveProfile(state: SessionState, vm: FlashViewModel): ProductProfile {
     val target = effectiveTarget(state, vm) ?: return ProductProfiles.AUTO_DETECT
-    return runCatching { ProductProfiles.alignedTo(ProductProfiles.AUTO_DETECT, target) }
+    return runCatching { vm.targetRegistry.find(target.deviceId)!!.profileFor(target, ProductProfiles.AUTO_DETECT) }
         .getOrDefault(ProductProfiles.AUTO_DETECT)
 }
 

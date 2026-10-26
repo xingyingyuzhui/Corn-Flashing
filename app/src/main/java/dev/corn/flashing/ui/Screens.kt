@@ -160,9 +160,9 @@ fun importErrorAdvice(error: String): Pair<String, String> = when {
 // ---------------------------------------------------------------- firmware detail (06)
 
 @Composable
-fun FirmwareDetailScreen(fw: ImportedFirmware, profile: ProductProfile, target: TargetInfo?, onBack: () -> Unit) {
+fun FirmwareDetailScreen(fw: ImportedFirmware, profile: ProductProfile, target: TargetInfo?, onBack: () -> Unit, registry: dev.corn.flashing.core.targets.TargetRegistry = TargetCatalog.registry) {
     val regions = fw.image.regions()
-    val preflight = FirmwarePreflight.inspect(fw.image, profile, target)
+    val preflight = FirmwarePreflight.inspect(fw.image, profile, target, registry)
     Column(Modifier.fillMaxSize().systemBarsPadding()) {
         BackTop("固件详情", when {
             !preflight.targetKnown -> "目标容量待识别 · 尚未确认适配"
@@ -258,6 +258,8 @@ fun FlashGrid(fw: ImportedFirmware, profile: ProductProfile) {
 
 @Composable
 fun ConfigTab(vm: FlashViewModel) {
+    val bindings by vm.algorithmBindings.collectAsStateWithLifecycle()
+    val registry = remember(bindings) { vm.targetRegistry }
     val state by vm.session.collectAsStateWithLifecycle()
     val p = vm.profile
     val prefs = vm.prefs
@@ -265,7 +267,7 @@ fun ConfigTab(vm: FlashViewModel) {
     TopBar("产品配置", "设备组与容量按探测自动匹配") {
         when {
             prefs.simulator -> SimMark()
-            probed != null && TargetCatalog.find(probed.deviceId)?.support == TargetSupport.FLASH_ALGORITHM -> Chip("算法已匹配", ChipTone.OK, dot = true)
+            probed != null && registry.find(probed.deviceId)?.support == TargetSupport.FLASH_ALGORITHM -> Chip("算法已匹配", ChipTone.OK, dot = true)
             probed != null -> Chip("仅识别", ChipTone.WARN, dot = true)
             else -> Chip("未探测", ChipTone.WARN)
         }
@@ -284,7 +286,7 @@ fun ConfigTab(vm: FlashViewModel) {
             KeyValue("Flash 容量", probed?.takeIf { it.flashSizeBytes > 0 }?.let {
                 "${it.flashSizeBytes / 1024} KB · 芯片报告"
             } ?: "待探测", mono = true)
-            val descriptor = probed?.let { TargetCatalog.find(it.deviceId) }
+            val descriptor = probed?.let { registry.find(it.deviceId) }
             val sectorSizes = descriptor?.let {
                 runCatching { it.geometry.sectors(p.flashStart, p.flashSizeBytes).map { sector -> sector.sizeBytes }.distinct() }.getOrNull()
             }
@@ -298,7 +300,7 @@ fun ConfigTab(vm: FlashViewModel) {
         }
         CornCard(spacing = 10.dp) {
             Label("内置芯片兼容性")
-            TargetCatalog.descriptors.forEach { descriptor ->
+            registry.descriptors.forEach { descriptor ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column(Modifier.weight(1f)) {
@@ -314,6 +316,7 @@ fun ConfigTab(vm: FlashViewModel) {
                 CornColors.Dim, 11.5.sp)
             T("这条验证记录不代表整个系列均已实测；“仅识别”目标不会执行擦除或写入。", CornColors.Mute, 11.5.sp)
         }
+        AlgorithmLibraryCard(vm)
         CornCard(spacing = 8.dp) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Label("保留区", Modifier.weight(1f))
@@ -354,6 +357,8 @@ fun ConfigTab(vm: FlashViewModel) {
 
 @Composable
 fun DevicesTab(vm: FlashViewModel, devices: List<UsbProbe>) {
+    val bindings by vm.algorithmBindings.collectAsStateWithLifecycle()
+    val registry = remember(bindings) { vm.targetRegistry }
     val usbMessage by vm.usbMessage.collectAsStateWithLifecycle()
     val state by vm.session.collectAsStateWithLifecycle()
     TopBar("设备", if (vm.hostSupported) "USB Host 可用 · 插拔自动刷新" else "本机不支持 USB Host")
@@ -381,7 +386,7 @@ fun DevicesTab(vm: FlashViewModel, devices: List<UsbProbe>) {
                 KeyValue("固件", probeInfo.firmware, mono = true)
                 KeyValue("编程路径", probeInfo.programmingPath)
                 KeyValue("USB 通道", probeInfo.transport)
-                val descriptor = state.target?.let { TargetCatalog.find(it.deviceId) }
+                val descriptor = state.target?.let { registry.find(it.deviceId) }
                 KeyValue("当前目标", when {
                     state.target == null -> "尚未识别"
                     descriptor == null -> "未登记 · 不开放擦写"

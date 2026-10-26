@@ -27,7 +27,10 @@ import kotlinx.coroutines.sync.withLock
 class StLinkHardwareBackend(
     private val manager: UsbManager,
     private val device: UsbDevice,
+    private val targets: dev.corn.flashing.core.targets.TargetRegistry = TargetCatalog.registry,
+    extraAlgorithms: List<FlashAlgorithm> = emptyList(),
 ) : FlashBackend {
+    private val algorithms = FlashAlgorithmRegistry(listOf(Stm32F1Algorithm()) + extraAlgorithms)
     override val isSimulation = false
     override val displayName = device.productName ?: "ST-LINK/V2"
 
@@ -75,7 +78,7 @@ class StLinkHardwareBackend(
                 ),
             )
 
-            val descriptor = TargetCatalog.requireProgrammable(live)
+            val descriptor = targets.requireProgrammable(live)
             val algorithm = algorithms.resolve(descriptor, session.probeInfo, live)
             val pages = erasePages(plan, options)
             require(pages.isNotEmpty()) { "没有需要擦除的页" }
@@ -94,14 +97,13 @@ class StLinkHardwareBackend(
 
     private fun erasePages(plan: FlashPlan, options: FlashExecuteOptions): List<Long> {
         if (options.eraseMode != 1) return plan.erasePageAddresses
-        val descriptor = TargetCatalog.requireProgrammable(plan.target)
+        val descriptor = targets.requireProgrammable(plan.target)
         return descriptor.geometry.sectors(descriptor.flashStart, plan.target.flashSizeBytes)
             .filter { sector -> plan.profile.reservedRanges.none { it.overlaps(sector.range) } }
             .map { it.address }
     }
 
     companion object {
-        private val algorithms = FlashAlgorithmRegistry(listOf(Stm32F1Algorithm()))
         // All backend instances share the same physical USB bus/probe access boundary.
         private val sessionMutex = Mutex()
         fun findAuthorized(manager: UsbManager, candidates: List<UsbProbe>): UsbDevice? {

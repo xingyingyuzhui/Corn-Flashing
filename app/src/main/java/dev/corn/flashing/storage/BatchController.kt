@@ -88,7 +88,7 @@ class BatchController(
         this.lastRealUid = null
         val planTarget = if (useSimulator) DemoFlashBackend.DEFAULT_TARGET
         else session.target ?: return "真实批次请先在设备页或工作台「识别芯片」"
-        runCatching { FlashPlanner.plan(firmware.image, repository.profile, planTarget) }
+        runCatching { FlashPlanner.plan(firmware.image, repository.profile, planTarget, if (useSimulator) dev.corn.flashing.core.targets.TargetCatalog.registry else repository.targets) }
             .onFailure { return "固件不能用于当前产品配置：${it.message}" }
         val profile = repository.profile
         val batch = BatchEntity(

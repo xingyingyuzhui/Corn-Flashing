@@ -5,10 +5,10 @@ data class FirmwarePreflight(val targetKnown: Boolean, val error: String? = null
     val canStart: Boolean get() = error == null
 
     companion object {
-        fun inspect(image: FirmwareImage, profile: ProductProfile, target: TargetInfo?): FirmwarePreflight {
+        fun inspect(image: FirmwareImage, profile: ProductProfile, target: TargetInfo?, registry: dev.corn.flashing.core.targets.TargetRegistry = dev.corn.flashing.core.targets.TargetCatalog.registry): FirmwarePreflight {
             if (target == null) return FirmwarePreflight(targetKnown = false)
             return try {
-                FlashPlanner.plan(image, profile, target)
+                FlashPlanner.plan(image, profile, target, registry)
                 FirmwarePreflight(targetKnown = true)
             } catch (error: IllegalArgumentException) {
                 FirmwarePreflight(targetKnown = true, error = error.message ?: "固件不符合目标配置")

@@ -117,4 +117,6 @@ GRADLE_USER_HOME="$HOME/.gradle" ./gradlew :core:test :app:assembleDebug :app:li
 
 ## 兼容性引擎
 
-通用探针接口、芯片描述库和算法注册已接入；当前真实烧录算法为单Bank STM32F1，F0/F4指定设备组仅识别。具体支持范围与实测组合见[兼容引擎架构](docs/architecture/compatibility-engine.md)，最新验证见[test10记录](docs/test-build-0.1.6-test10.md)。CMSIS-Pack/FLM执行器仍待后续实现。
+通用探针接口、芯片描述库和算法注册已接入；当前真实烧录算法为单Bank STM32F1，F0/F4指定设备组仅识别。具体支持范围与实测组合见[兼容引擎架构](docs/architecture/compatibility-engine.md)，最新验证见[test10记录](docs/test-build-0.1.6-test10.md)。CMSIS-Pack/FLM解析、显式绑定与执行基础已接入，见[第二阶段说明](docs/architecture/cmsis-pack-flm.md)；外部算法仍需对应实板验证。
+
+最新算法包阶段验证：[test11记录](docs/test-build-0.1.6-test11.md)。产品配置中可导入.pack/.flm；仅显式绑定且布局匹配后参与任务，外部FLM尚无实板验证记录。

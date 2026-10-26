@@ -27,6 +27,10 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     val usbMessage = app.usb.message
     val usbDenied = app.usb.lastDenied
     val hostSupported = app.usb.hostSupported
+    val algorithmLibrary get() = app.algorithms
+    val installedAlgorithms = app.algorithms.installed
+    val algorithmBindings = app.algorithms.bindings
+    val targetRegistry get() = app.algorithms.snapshot().targets
     val profile get() = repository.profile
     val prefs = Prefs(application)
     val batch = batches.active
@@ -110,6 +114,81 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
                 _notice.value = "识别失败：${error.message ?: error.javaClass.simpleName}"
             }
         }
+    }
+
+    private val _algorithmCandidates = MutableStateFlow<List<dev.corn.flashing.pack.AlgorithmCandidate>>(emptyList())
+    val algorithmCandidates = _algorithmCandidates.asStateFlow()
+    private val _algorithmBusy = MutableStateFlow(false)
+    val algorithmBusy = _algorithmBusy.asStateFlow()
+    private fun algorithmChangeAllowed(): Boolean {
+        if (session.value.running || session.value.probing || batch.value != null || _algorithmBusy.value) {
+            notify("请先结束烧录、识别或批次，再修改算法")
+            return false
+        }
+        stopWatchingNextBoard()
+        return true
+    }
+    fun importAlgorithm(uri: Uri) {
+        if (!algorithmChangeAllowed()) return
+        _algorithmBusy.value = true
+        viewModelScope.launch {
+            try {
+                _algorithmCandidates.value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val name = app.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                        if (it.moveToFirst()) it.getString(0) else null
+                    } ?: error("无法读取算法文件名")
+                    val bytes = app.contentResolver.openInputStream(uri)?.use { input ->
+                        val out = java.io.ByteArrayOutputStream()
+                        val buffer = ByteArray(8192)
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            require(out.size().toLong() + count <= 64L * 1024 * 1024) { "算法包最大64MiB" }
+                            out.write(buffer, 0, count)
+                        }
+                        out.toByteArray()
+                    } ?: error("无法打开算法包")
+                    app.algorithms.candidates(name, bytes)
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                notify("导入算法失败：${error.message}")
+            } finally { _algorithmBusy.value = false }
+        }
+    }
+    fun dismissAlgorithmCandidates() { _algorithmCandidates.value = emptyList() }
+    fun installAlgorithm(candidate: dev.corn.flashing.pack.AlgorithmCandidate) {
+        if (!algorithmChangeAllowed()) return
+        _algorithmBusy.value = true
+        viewModelScope.launch {
+            try {
+                val item = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { app.algorithms.install(candidate) }
+                dismissAlgorithmCandidates()
+                notify("算法已导入：${item.name}。尚未绑定芯片，不会执行擦写。")
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                notify("算法解析失败：${error.message}")
+            } finally { _algorithmBusy.value = false }
+        }
+    }
+    fun bindAlgorithm(hash: String) {
+        if (!algorithmChangeAllowed()) return
+        try {
+            val target = requireNotNull(session.value.target) { "请先识别实际芯片" }
+            require(!prefs.simulator) { "请关闭模拟模式并识别实际芯片" }
+            app.algorithms.bind(hash, target)
+            notify("已为设备组0x${target.deviceId.toString(16)}绑定此算法。首次实板使用仍需验证。")
+        } catch (error: Exception) { notify("绑定算法失败：${error.message}") }
+    }
+    fun restoreBuiltInAlgorithm() {
+        if (!algorithmChangeAllowed()) return
+        try { session.value.target?.let { app.algorithms.useBuiltIn(it.deviceId) } }
+        catch (error: Exception) { notify("恢复算法失败：${error.message}") }
+    }
+    fun removeAlgorithm(hash: String) {
+        if (!algorithmChangeAllowed()) return
+        try { app.algorithms.remove(hash) }
+        catch (error: Exception) { notify("移除算法失败：${error.message}") }
     }
 
     private var singleCounter = 0L

@@ -66,6 +66,7 @@ fun interface RealBackendProvider { fun open(): FlashBackend? }
 class FlashRepository(
     private val context: Context,
     private val dao: FlashDao,
+    private val targetRegistry: () -> dev.corn.flashing.core.targets.TargetRegistry = { TargetCatalog.registry },
     private val realBackend: RealBackendProvider = RealBackendProvider { null },
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -74,10 +75,11 @@ class FlashRepository(
     val history = dao.recentJobs()
     private val probePrefs = context.getSharedPreferences("probe", Context.MODE_PRIVATE)
     /** Open F1 template, or the last probed chip alignment when available. */
+    val targets get() = targetRegistry()
     val profile: ProductProfile
         get() {
             val target = _state.value.target
-            return if (target != null) runCatching { ProductProfiles.alignedTo(ProductProfiles.AUTO_DETECT, target) }
+            return if (target != null) runCatching { targets.find(target.deviceId)!!.profileFor(target, ProductProfiles.AUTO_DETECT) }
                 .getOrDefault(ProductProfiles.AUTO_DETECT) else ProductProfiles.AUTO_DETECT
         }
     private var pending: Pair<JobEntity, Pair<ImportedFirmware, JobRequest>>? = null
@@ -257,7 +259,7 @@ class FlashRepository(
             val mv = backend.targetVoltageMv
             if (!backend.isSimulation) saveProbedTarget(target)
             _state.update { it.copy(target = target, voltageMv = mv, probeInfo = backend.probeInfo) }
-            val plan = FlashPlanner.plan(firmware.image, ProductProfiles.AUTO_DETECT, target)
+            val plan = FlashPlanner.plan(firmware.image, ProductProfiles.AUTO_DETECT, target, if (backend.isSimulation) TargetCatalog.registry else targets)
             record = record.copy(targetUid = target.uid, mode = if (backend.isSimulation) "DEMO" else "STLINK")
             _state.update { it.copy(target = target, plan = plan, voltageMv = mv, probeInfo = backend.probeInfo) }
             backend.execute(plan, request.executeOptions) { event ->
@@ -310,7 +312,7 @@ class FlashRepository(
                     voltageMv = mv,
                     probeInfo = backend.probeInfo,
                     usbDiagnostic = null,
-                    message = "已自动匹配 ${ProductProfiles.alignedTo(ProductProfiles.AUTO_DETECT, target).name}" +
+                    message = "已自动匹配 ${targets.find(target.deviceId)!!.profileFor(target, ProductProfiles.AUTO_DETECT).name}" +
                         (target.uid?.let { u -> " · $u" } ?: ""),
                 )
             }

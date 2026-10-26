@@ -100,14 +100,14 @@ class StLinkUsbSession private constructor(
         requireMemoryStatus("半字写入 ${address.hex()}")
     }
     override fun readCoreRegister(index: Int): Long {
-        require(index in 0..16)
+        require(index in 0..16 || index == 20)
         check(isHalted()) { "读核心寄存器 R$index 前目标未停核" }
         writeMem32Word(0xE000EDF4L, index.toLong())
         waitRegisterReady()
         return readMem32(0xE000EDF8L)
     }
     override fun writeCoreRegister(index: Int, value: Long) {
-        require(index in 0..16)
+        require(index in 0..16 || index == 20)
         check(isHalted()) { "写核心寄存器前目标未停核" }
         writeMem32Word(0xE000EDF8L, value)
         writeMem32Word(0xE000EDF4L, 0x10000L or index.toLong())
