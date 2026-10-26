@@ -462,14 +462,14 @@ fun StepList(current: FlashStage?, stoppedAt: FlashStage?, log: RunLog?, pages: 
                             now -> Box(Modifier.size(7.dp).clip(CircleShape).background(CornColors.CornOn))
                         }
                     }
-                    if (i < SIX_STEPS.lastIndex) Box(Modifier.width(2.dp).height(14.dp).background(if (done) CornColors.Leaf.copy(alpha = .5f) else CornColors.Line))
+                    if (i < SIX_STEPS.lastIndex) Box(Modifier.width(2.dp).height(22.dp).background(if (done) CornColors.Leaf.copy(alpha = .5f) else CornColors.Line))
                 }
                 Spacer(Modifier.width(10.dp))
                 T(stepLabel(stage, pages), when { bad -> CornColors.Red; now -> CornColors.Corn; done -> CornColors.Text; else -> CornColors.Mute },
                     13.5.sp, if (now) FontWeight.Bold else FontWeight.Medium, modifier = Modifier.weight(1f).padding(top = 2.dp))
                 val t = log?.let { stepTime(it, i) }
                 T(when { bad -> stopText; t != null -> t; now -> "…"; else -> "" },
-                    if (bad) CornColors.Red else CornColors.Dim, 11.5.sp, mono = true, modifier = Modifier.padding(top = 3.dp))
+                    when { bad -> CornColors.Red; now -> CornColors.Corn; else -> CornColors.Leaf }, 11.5.sp, mono = true, modifier = Modifier.padding(top = 3.dp))
             }
         }
     }
