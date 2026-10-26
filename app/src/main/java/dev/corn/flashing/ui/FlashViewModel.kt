@@ -13,6 +13,8 @@ import dev.corn.flashing.CornApplication
 import dev.corn.flashing.core.BatchConfig
 import dev.corn.flashing.service.FlashService
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -112,8 +114,13 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Simulator path uses demo boards; hardware path leaves the board blank for the ST-LINK backend. */
     private fun singleRequest(): dev.corn.flashing.storage.JobRequest {
+        val options = dev.corn.flashing.core.FlashExecuteOptions(
+            resetAfter = prefs.resetAfter,
+            eraseMode = prefs.eraseMode,
+            verifyMode = prefs.verifyMode,
+        )
         if (!prefs.simulator) {
-            return dev.corn.flashing.storage.JobRequest(useSimulator = false)
+            return dev.corn.flashing.storage.JobRequest(useSimulator = false, executeOptions = options)
         }
         singleCounter++
         val target = dev.corn.flashing.core.DemoFlashBackend.DEFAULT_TARGET.copy(
@@ -129,6 +136,7 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
         return dev.corn.flashing.storage.JobRequest(
             board = dev.corn.flashing.core.SimulatedBoards.Board(target, failure),
             useSimulator = true,
+            executeOptions = options,
         )
     }
 
@@ -138,7 +146,7 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startBatch(config: BatchConfig, injectFaults: Boolean, onStarted: () -> Unit) {
         viewModelScope.launch {
-            val error = batches.start(config, injectFaults)
+            val error = batches.start(config, injectFaults, useSimulator = prefs.simulator)
             if (error == null) onStarted() else _notice.value = error
         }
     }
@@ -167,6 +175,33 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
                 if (error is CancellationException) throw error
                 _notice.value = "导出失败：${error.message}"
             }
+        }
+    }
+
+
+    private var nextBoardJob: Job? = null
+
+    /** After a real success, poll probe until UID changes then start the next single run. */
+    fun watchNextBoard(previousUid: String?) {
+        nextBoardJob?.cancel()
+        nextBoardJob = viewModelScope.launch {
+            repeat(90) { // ~3 minutes at 2s
+                delay(2000)
+                if (session.value.running) return@launch
+                if (batches.active.value != null) return@launch
+                try {
+                    val target = repository.probeChip()
+                    val uid = target.uid
+                    if (uid != null && uid != previousUid) {
+                        _notice.value = "检测到新板 $uid，开始烧录"
+                        startSingle()
+                        return@launch
+                    }
+                } catch (_: Exception) {
+                    // keep waiting
+                }
+            }
+            _notice.value = "等待新板超时：请手动点「立即再烧一块」"
         }
     }
 

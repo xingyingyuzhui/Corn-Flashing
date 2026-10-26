@@ -296,9 +296,9 @@ fun ConfigTab(vm: FlashViewModel) {
             }
         }
         CornCard(spacing = 10.dp) {
-            Row { Label("擦除偏好", Modifier.weight(1f)); T("真实擦写后生效", CornColors.Mute, 11.sp) }
+            Row { Label("擦除", Modifier.weight(1f)); T("按下方偏好执行", CornColors.Mute, 11.sp) }
             Seg(listOf("只擦用到的页", "整片擦除"), prefs.eraseMode, { prefs.eraseMode = it })
-            Label("校验（真实擦写接入后生效）")
+            Label("校验")
             Seg(listOf("回读全部", "CRC32", "不校验"), prefs.verifyMode, { prefs.verifyMode = it })
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 T("SWD 速率", CornColors.Dim, 13.sp, modifier = Modifier.weight(1f))

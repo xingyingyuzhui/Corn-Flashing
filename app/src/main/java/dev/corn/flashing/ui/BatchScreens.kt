@@ -224,14 +224,24 @@ fun NewBatchScreen(vm: FlashViewModel, state: SessionState, devices: List<UsbPro
                 Row { Label("工位", Modifier.weight(1f)); T("已选 1", CornColors.Corn, 11.5.sp, FontWeight.SemiBold) }
                 val probe = devices.firstOrNull { it.candidate }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StationTile("工位 1", if (vm.prefs.simulator) "模拟烧录器" else (probe?.name ?: "模拟烧录器"), true, Modifier.weight(1f))
+                    StationTile(
+                        "工位 1",
+                        if (vm.prefs.simulator) "模拟烧录器"
+                        else (probe?.name ?: "请先授权 ST-LINK"),
+                        true,
+                        Modifier.weight(1f),
+                    )
                     StationTile("工位 2", "未连接", false, Modifier.weight(1f))
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StationTile("工位 3", "未连接", false, Modifier.weight(1f))
                     StationTile("工位 4", "未连接", false, Modifier.weight(1f))
                 }
-                T("多工位并行还没开放，本批次只用工位 1", CornColors.Mute, 11.sp)
+                T(
+                    if (vm.prefs.simulator) "模拟批次 · 单工位连续"
+                    else "真实批次 · 单工位连续（每块板探测后烧录）",
+                    CornColors.Mute, 11.sp,
+                )
             }
             CornCard(padding = 0.dp) {
                 Column(Modifier.padding(horizontal = 14.dp)) {

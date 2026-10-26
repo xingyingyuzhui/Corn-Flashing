@@ -191,6 +191,9 @@ private fun FinishFeedback(vm: FlashViewModel, state: SessionState) {
             val vibrator = context.getSystemService(android.os.Vibrator::class.java)
             vibrator?.vibrate(android.os.VibrationEffect.createOneShot(300, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
         }
+        if (job.status == "SUCCEEDED" && vm.prefs.autoNextBoard && !vm.prefs.simulator) {
+            vm.watchNextBoard(job.targetUid)
+        }
     }
 }
 
@@ -296,14 +299,14 @@ private fun Workbench(
             subtitle = when {
                 firmware == null -> "先选择固件"
                 sim -> "模拟 · 擦除 $pages 页 · 写入 ${kb(firmware.image.totalBytes)}"
-                else -> "真实探测后规划；擦写尚未接入 · ${pages ?: "?"} 页"
+                else -> "真实擦写 · ${pages ?: "?"} 页 · 回读校验"
             })
         CornCard(padding = 0.dp) {
             Column(Modifier.padding(horizontal = 14.dp)) {
-                SRow("自动换板", "偏好已保存；换板自动检测尚未接线，成功后请手动再烧") {
+                SRow("自动换板", if (sim) "模拟：成功后点「立即再烧一块」" else "成功后探测到新 UID 自动开始") {
                     CornToggle(vm.prefs.autoNextBoard) { vm.prefs.autoNextBoard = it }
                 }
-                SRow("完成后复位运行", "偏好已保存；真实擦写接入后才会复位目标", last = true) {
+                SRow("完成后复位运行", "真实路径：烧录后复位并运行目标；模拟仅演示", last = true) {
                     CornToggle(vm.prefs.resetAfter) { vm.prefs.resetAfter = it }
                 }
             }
@@ -623,13 +626,13 @@ private fun ColumnScope.SuccessScreen(vm: FlashViewModel, state: SessionState, l
             )
             KeyValue("UID", shortUid(job.targetUid), mono = true)
             KeyValue("写入", fw?.let { "${kb(it.image.totalBytes)} · ${erasePages(it, vm.profile)} 页" } ?: "—", mono = true)
-            KeyValue("回读校验", if (simJob) "通过 · 模拟" else "通过", valueColor = CornColors.Leaf)
+            KeyValue("回读校验", if (simJob) "通过 · 模拟" else "回读通过", valueColor = CornColors.Leaf)
             KeyValue(
                 "复位",
                 when {
                     !vm.prefs.resetAfter -> "未复位"
                     simJob -> "已运行 · 模拟"
-                    else -> "已请求复位"
+                    else -> "已复位运行"
                 },
             )
             KeyValue("目标电压", voltageLabel(vm, state), mono = true, last = true)
@@ -643,8 +646,8 @@ private fun ColumnScope.SuccessScreen(vm: FlashViewModel, state: SessionState, l
             T(
                 when {
                     !vm.prefs.autoNextBoard -> "自动换板已关闭"
-                    job.mode == "DEMO" -> "模拟：点「立即再烧一块」继续（自动换板检测尚未接线）"
-                    else -> "自动换板检测尚未接线：请点「立即再烧一块」"
+                    job.mode == "DEMO" -> "模拟：点「立即再烧一块」继续"
+                    else -> "正在等待下一块板（新 UID）…也可手动点「立即再烧一块」"
                 },
                 CornColors.Dim, 11.5.sp,
             )

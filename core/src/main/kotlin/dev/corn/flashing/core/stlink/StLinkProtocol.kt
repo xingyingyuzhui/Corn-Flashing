@@ -5,8 +5,9 @@ package dev.corn.flashing.core.stlink
  * Pure Kotlin so JVM unit tests can cover packing without USB hardware.
  *
  * Protocol reference: stlink-org/stlink USB API v2 (16-byte command packets,
- * bulk OUT then bulk IN). Not a full Flash programmer — enough to enter SWD
- * and read chip identity / Flash size / UID.
+ * bulk OUT then bulk IN). Covers SWD identify plus STM32F1 Flash page erase /
+ * half-word program helpers (register addresses and CR/SR bits). Never touches
+ * option bytes / RDP.
  */
 object StLinkProtocol {
     const val CMD_SIZE = 16
@@ -22,6 +23,7 @@ object StLinkProtocol {
     const val DEBUG_READMEM_32BIT = 0x07
     const val DEBUG_WRITEMEM_32BIT = 0x08
     const val DEBUG_READMEM_8BIT = 0x0C
+    const val DEBUG_WRITEMEM_8BIT = 0x0D
     const val DEBUG_EXIT = 0x21
     const val DEBUG_APIV2_ENTER = 0x30
     const val DEBUG_APIV2_READ_IDCODES = 0x31
@@ -51,6 +53,26 @@ object StLinkProtocol {
     const val DHCSR_DBGKEY = 0xA05F0000L
     const val DHCSR_C_DEBUGEN = 0x1
     const val DHCSR_C_HALT = 0x2
+
+    // STM32F1 embedded Flash interface (RM0008) — never touch OPTKEYR / option bytes.
+    const val ADDR_FLASH_KEYR = 0x40022004L
+    const val ADDR_FLASH_SR = 0x4002200CL
+    const val ADDR_FLASH_CR = 0x40022010L
+    const val ADDR_FLASH_AR = 0x40022014L
+    const val FLASH_KEY1 = 0x45670123L
+    const val FLASH_KEY2 = 0xCDEF89ABL
+    const val FLASH_CR_PG = 0x1
+    const val FLASH_CR_PER = 0x2
+    const val FLASH_CR_MER = 0x4
+    const val FLASH_CR_STRT = 0x40
+    const val FLASH_CR_LOCK = 0x80
+    const val FLASH_SR_BSY = 0x1
+    const val FLASH_SR_PGERR = 0x4
+    const val FLASH_SR_WRPRTERR = 0x10
+    const val FLASH_SR_EOP = 0x20
+    const val NRST_LOW = 1
+    const val NRST_HIGH = 2
+    const val NRST_PULSE = 3
 
     fun cmd(vararg bytes: Int): ByteArray {
         require(bytes.size <= CMD_SIZE) { "ST-LINK command too long" }
@@ -101,6 +123,37 @@ object StLinkProtocol {
 
     /** Halt the core via DHCSR (V2 WRITEDEBUGREG). */
     fun haltCore() = writeDebugReg(ADDR_DHCSR, DHCSR_DBGKEY or DHCSR_C_HALT.toLong() or DHCSR_C_DEBUGEN.toLong())
+
+    /** Keep debug enabled but clear C_HALT so the core can run after reset. */
+    fun unhaltCore() = writeDebugReg(ADDR_DHCSR, DHCSR_DBGKEY or DHCSR_C_DEBUGEN.toLong())
+
+    fun resetSys() = cmd(DEBUG_COMMAND, DEBUG_APIV2_RESETSYS)
+    fun driveNrst(action: Int) = cmd(DEBUG_COMMAND, DEBUG_APIV2_DRIVE_NRST, action and 0xFF)
+
+    fun writeMem32(address: Long, length: Int, ap: Int = 0): ByteArray {
+        require(length in 1..1024 && length % 4 == 0) { "WRITEMEM_32BIT length must be 4..1024 and 4-aligned" }
+        require(address and 3L == 0L) { "WRITEMEM_32BIT address must be 4-aligned" }
+        val out = ByteArray(CMD_SIZE)
+        out[0] = DEBUG_COMMAND.toByte()
+        out[1] = DEBUG_WRITEMEM_32BIT.toByte()
+        writeU32Le(out, 2, address)
+        writeU16Le(out, 6, length)
+        out[8] = (ap and 0xFF).toByte()
+        return out
+    }
+
+    fun writeMem8(address: Long, length: Int): ByteArray {
+        require(length in 1..1024) { "WRITEMEM_8BIT length must be 1..1024" }
+        val out = ByteArray(CMD_SIZE)
+        out[0] = DEBUG_COMMAND.toByte()
+        out[1] = DEBUG_WRITEMEM_8BIT.toByte()
+        writeU32Le(out, 2, address)
+        writeU16Le(out, 6, length)
+        return out
+    }
+
+    /** Clear EOP / PGERR / WRPRTERR in FLASH_SR (write-1-to-clear). */
+    fun flashSrClearMask(): Long = (FLASH_SR_EOP or FLASH_SR_PGERR or FLASH_SR_WRPRTERR).toLong()
 
     fun parseVersion(raw: ByteArray): StLinkVersion {
         require(raw.size >= 6) { "GET_VERSION reply too short" }

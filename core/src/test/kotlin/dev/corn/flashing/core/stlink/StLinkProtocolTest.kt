@@ -67,4 +67,31 @@ class StLinkProtocolTest {
         StLinkProtocol.writeU32Le(raw, 4, 1375)
         assertEquals(3300, StLinkProtocol.parseVoltageMv(raw))
     }
+
+    @Test fun packsWriteMem32AndWriteMem8() {
+        val w32 = StLinkProtocol.writeMem32(0x08000000L, 16)
+        assertEquals(0xF2.toByte(), w32[0])
+        assertEquals(0x08.toByte(), w32[1])
+        assertEquals(0x00.toByte(), w32[2])
+        assertEquals(0x00.toByte(), w32[3])
+        assertEquals(0x00.toByte(), w32[4])
+        assertEquals(0x08.toByte(), w32[5])
+        assertEquals(16.toByte(), w32[6])
+        val w8 = StLinkProtocol.writeMem8(0x08000000L, 2)
+        assertEquals(0x0D.toByte(), w8[1])
+        assertEquals(2.toByte(), w8[6])
+    }
+
+    @Test fun packsHaltUnhaltAndFlashKeys() {
+        assertEquals(0x35.toByte(), StLinkProtocol.haltCore()[1])
+        assertEquals(0x35.toByte(), StLinkProtocol.unhaltCore()[1])
+        assertEquals(0x45670123L, StLinkProtocol.FLASH_KEY1)
+        assertEquals(0xCDEF89ABL, StLinkProtocol.FLASH_KEY2)
+        assertEquals(0x40022010L, StLinkProtocol.ADDR_FLASH_CR)
+        assertTrue(StLinkProtocol.flashSrClearMask() and StLinkProtocol.FLASH_SR_EOP.toLong() != 0L)
+    }
+
+    @Test fun packsResetSys() {
+        assertArrayEquals(StLinkProtocol.cmd(0xF2, 0x32), StLinkProtocol.resetSys())
+    }
 }
