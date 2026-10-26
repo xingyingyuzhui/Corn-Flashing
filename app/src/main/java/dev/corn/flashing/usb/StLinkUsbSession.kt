@@ -214,8 +214,21 @@ class StLinkUsbSession private constructor(
     private fun Long.hex(): String = "0x" + toString(16).uppercase().padStart(8, '0')
 
     private fun xfer(cmd: ByteArray, rxSize: Int): ByteArray {
-        transfers.command(cmd)
-        return if (rxSize <= 0) ByteArray(0) else transfers.response(rxSize)
+        try {
+            transfers.command(cmd)
+            return if (rxSize <= 0) ByteArray(0) else transfers.response(rxSize)
+        } catch (cancelled: java.util.concurrent.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            val name = when (cmd[0].toInt() and 255) {
+                StLinkProtocol.GET_VERSION -> "GET_VERSION"
+                StLinkProtocol.GET_CURRENT_MODE -> "GET_CURRENT_MODE"
+                StLinkProtocol.GET_TARGET_VOLTAGE -> "GET_TARGET_VOLTAGE"
+                else -> "STLINK_CMD"
+            }
+            val code = cmd.take(2).joinToString(" ") { "%02X".format(it.toInt() and 255) }
+            throw IllegalStateException("$name [$code]：${error.message}", error)
+        }
     }
 
     private fun xferOut(cmd: ByteArray) = transfers.command(cmd)
@@ -240,7 +253,10 @@ class StLinkUsbSession private constructor(
             var lastError: Exception? = null
             // Compatibility selection is ONLY a read-only GET_VERSION handshake on a fresh connection.
             // Once selected, the entire session uses that strategy and never replays commands.
-            val attempts = java.util.ArrayDeque(UsbTransferMode.entries)
+            val preferredModes = if (NativeUsbFs.available) {
+                listOf(UsbTransferMode.USBFS_NATIVE, UsbTransferMode.BULK, UsbTransferMode.DIRECT_REQUEST)
+            } else listOf(UsbTransferMode.BULK, UsbTransferMode.DIRECT_REQUEST)
+            val attempts = java.util.ArrayDeque(preferredModes)
             val recoveredEndpoints = mutableSetOf<Int>()
             var recoveryRetryAdded = false
             while (attempts.isNotEmpty()) {
@@ -262,7 +278,7 @@ class StLinkUsbSession private constructor(
                     if (iface.alternateSetting != 0) {
                         check(connection.setInterface(iface)) { "无法选择接口 alternate=${iface.alternateSetting}" }
                     }
-                    if (mode != UsbTransferMode.BULK) {
+                    if (lastError != null) {
                         // Discard only possible replies from the failed, read-only handshake, never from a flash session.
                         for (index in 0 until 2) {
                             val drained = connection.bulkTransfer(pick.epIn, ByteArray(64), 64, 50)

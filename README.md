@@ -1,6 +1,6 @@
 # Corn Flashing
 
-本地修复测试版：**0.1.6-test3**（尚未发布到 GitHub Release）。USB 修复与诊断步骤见 [测试版说明](docs/test-build-0.1.6-test3.md)。
+本地修复测试版：**0.1.6-test4**（尚未发布到 GitHub Release）。USB 修复与诊断步骤见 [测试版说明](docs/test-build-0.1.6-test4.md)。
 
 Android 离线单片机烧录工具的基础框架。目标为 ST-LINK/V2 + STM32F103，后续扩展其他探针和多路批量。
 
