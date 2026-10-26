@@ -286,13 +286,17 @@ private fun Workbench(
         }
         if (!sim && probe?.permissionGranted == true) {
             CornButton(
-                if (state.target == null) "识别芯片" else "重新识别",
+                when {
+                    state.probing -> "识别中…"
+                    state.target == null -> "识别芯片"
+                    else -> "重新识别"
+                },
                 vm::probeChip,
                 Modifier.fillMaxWidth(),
                 height = 48,
                 radius = 16,
                 icon = Lucide.Chip,
-                enabled = !state.running,
+                enabled = !state.running && !state.probing,
                 subtitle = state.target?.let { "${it.family} · ${it.flashSizeBytes / 1024} KB" } ?: "读 DBGMCU / Flash 容量 / UID",
             )
         }
@@ -301,8 +305,9 @@ private fun Workbench(
         val preflight = firmware?.let { FirmwarePreflight.inspect(it.image, effectiveProfile(state, vm), effectiveTarget(state, vm)) }
         val pages = firmware?.takeIf { preflight?.targetKnown == true && preflight.canStart }?.let { erasePages(it, effectiveProfile(state, vm)) }
         CornButton("开始烧录", onStart, Modifier.fillMaxWidth(), primary = true, height = 64, radius = 20, icon = Lucide.Bolt,
-            enabled = state.ready && !state.importing && firmware != null && !state.running && preflight?.canStart == true,
+            enabled = state.ready && !state.importing && firmware != null && !state.running && !state.probing && preflight?.canStart == true,
             subtitle = when {
+                state.probing -> "识别中，请等待 USB 通信完成"
                 firmware == null -> "先选择固件"
                 preflight?.error != null -> "固件不符合目标容量或配置"
                 preflight?.targetKnown != true -> "先识别目标容量，再检查并烧录"

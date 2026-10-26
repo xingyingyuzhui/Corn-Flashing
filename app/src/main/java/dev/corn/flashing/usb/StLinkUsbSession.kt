@@ -6,7 +6,6 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
-import android.hardware.usb.UsbRequest
 import dev.corn.flashing.core.TargetInfo
 import dev.corn.flashing.core.FlashPlan
 import dev.corn.flashing.core.FlashExecuteOptions
@@ -15,9 +14,9 @@ import dev.corn.flashing.core.stlink.F1TargetMemory
 import dev.corn.flashing.core.stlink.StLinkProtocol
 import dev.corn.flashing.core.stlink.StLinkUsbLayout
 import dev.corn.flashing.core.stlink.StLinkVersion
+import dev.corn.flashing.core.stlink.StLinkBulkTransfers
+import android.os.Build
 import java.io.Closeable
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 /**
  * Claims the ST-LINK bulk interface, identifies the chip, and programs STM32F1 Flash
@@ -29,7 +28,9 @@ class StLinkUsbSession private constructor(
     private val epOut: UsbEndpoint,
     private val epIn: UsbEndpoint,
     private val layoutLabel: String,
+    private val io: AndroidUsbBulkIo,
 ) : Closeable {
+    private val transfers = StLinkBulkTransfers(io, layoutLabel)
     var version: StLinkVersion? = null
         private set
     var voltageMv: Int = 0
@@ -37,7 +38,12 @@ class StLinkUsbSession private constructor(
 
     /** First GET_VERSION after open — proves bulk I/O works. */
     fun smokeGetVersion() {
-        version = StLinkProtocol.parseVersion(xfer(StLinkProtocol.getVersion(), 6))
+        val raw = xfer(StLinkProtocol.getVersion(), 6)
+        val parsed = StLinkProtocol.parseVersion(raw)
+        require(parsed.stlink in 2..3 && parsed.jtag > 0) {
+            "GET_VERSION 应答异常：${raw.joinToString(" ") { "%02X".format(it.toInt() and 255) }}"
+        }
+        version = parsed
     }
 
     fun identify(): TargetInfo {
@@ -46,11 +52,11 @@ class StLinkUsbSession private constructor(
         if (mode == StLinkProtocol.MODE_DFU) {
             xferOut(StLinkProtocol.exitDfu())
         } else if (mode == StLinkProtocol.MODE_DEBUG) {
-            runCatching { xferOut(StLinkProtocol.exitDebug()) }
+            xferOut(StLinkProtocol.exitDebug())
         }
-        voltageMv = runCatching {
+        voltageMv = if (version?.supportsTargetVoltage == true) {
             StLinkProtocol.parseVoltageMv(xfer(StLinkProtocol.getTargetVoltage(), 8))
-        }.getOrDefault(0)
+        } else 0
 
         val enter = xfer(StLinkProtocol.enterSwd(), 2)
         StLinkProtocol.requireStatusOk(enter, "进入 SWD")
@@ -86,7 +92,7 @@ class StLinkUsbSession private constructor(
         if (version == null) smokeGetVersion()
         val mode = StLinkProtocol.parseMode(xfer(StLinkProtocol.getCurrentMode(), 2))
         if (mode == StLinkProtocol.MODE_DFU) xferOut(StLinkProtocol.exitDfu())
-        else if (mode == StLinkProtocol.MODE_DEBUG) runCatching { xferOut(StLinkProtocol.exitDebug()) }
+        else if (mode == StLinkProtocol.MODE_DEBUG) xferOut(StLinkProtocol.exitDebug())
         StLinkProtocol.requireStatusOk(xfer(StLinkProtocol.enterSwd(), 2), "进入 SWD")
         initializeApAndHalt()
     }
@@ -202,131 +208,106 @@ class StLinkUsbSession private constructor(
         return out
     }
 
-    private fun xferOutRaw(data: ByteArray) {
-        var sent = 0
-        while (sent < data.size) {
-            val n = connection.bulkTransfer(epOut, data, sent, data.size - sent, TIMEOUT_MS)
-            require(n > 0) {
-                "ST-LINK 写数据失败：实际 $n（$layoutLabel）"
-            }
-            sent += n
-        }
-    }
+    private fun xferOutRaw(data: ByteArray) = transfers.payload(data)
 
     private fun Long.hex(): String = "0x" + toString(16).uppercase().padStart(8, '0')
 
-
-
     private fun xfer(cmd: ByteArray, rxSize: Int): ByteArray {
-        xferOut(cmd)
-        if (rxSize <= 0) return ByteArray(0)
-        val buf = ByteArray(rxSize)
-        val n = bulkIn(buf, rxSize)
-        require(n == rxSize) {
-            "ST-LINK 读应答失败：期望 $rxSize 字节，实际 $n（$layoutLabel）"
-        }
-        return buf
+        transfers.command(cmd)
+        return if (rxSize <= 0) ByteArray(0) else transfers.response(rxSize)
     }
 
-    private fun xferOut(cmd: ByteArray) {
-        var n = connection.bulkTransfer(epOut, cmd, cmd.size, TIMEOUT_MS)
-        if (n < 0) {
-            try {
-                Thread.sleep(RETRY_SLEEP_MS)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-            }
-            n = connection.bulkTransfer(epOut, cmd, cmd.size, TIMEOUT_MS)
-        }
-        if (n < 0) {
-            n = bulkOutViaRequest(cmd)
-        }
-        require(n == cmd.size) {
-            "ST-LINK 写命令失败：期望 ${cmd.size} 字节，实际 $n（$layoutLabel）。" +
-                "请拔插 ST-LINK 后重试，确认没有电脑端占用"
-        }
-    }
-
-    private fun bulkIn(buf: ByteArray, length: Int): Int {
-        var n = connection.bulkTransfer(epIn, buf, length, TIMEOUT_MS)
-        if (n < 0) {
-            try {
-                Thread.sleep(RETRY_SLEEP_MS)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-            }
-            n = connection.bulkTransfer(epIn, buf, length, TIMEOUT_MS)
-        }
-        return n
-    }
-
-    private fun bulkOutViaRequest(cmd: ByteArray): Int {
-        val req = UsbRequest()
-        return try {
-            if (!req.initialize(connection, epOut)) return -1
-            val buf = ByteBuffer.allocate(cmd.size).order(ByteOrder.LITTLE_ENDIAN)
-            buf.put(cmd)
-            buf.rewind()
-            if (!req.queue(buf)) return -1
-            val done = connection.requestWait(TIMEOUT_MS.toLong()) ?: return -1
-            if (done !== req) return -1
-            buf.position().coerceAtLeast(0)
-        } catch (_: Exception) {
-            -1
-        } finally {
-            runCatching { req.close() }
-        }
-    }
+    private fun xferOut(cmd: ByteArray) = transfers.command(cmd)
 
     override fun close() {
-        runCatching { xferOut(StLinkProtocol.exitDebug()) }
+        // Releasing an unopened/broken transport must never send another ST-LINK command.
+        io.close()
         runCatching { connection.releaseInterface(usbInterface) }
         connection.close()
     }
 
     companion object {
-        private const val TIMEOUT_MS = 3000
-        private const val RETRY_SLEEP_MS = 80L
+        private const val CONTROL_TIMEOUT_MS = 1000
 
         fun open(manager: UsbManager, device: UsbDevice): StLinkUsbSession {
             require(manager.hasPermission(device)) { "尚未获得 USB 授权" }
-            val connection = manager.openDevice(device)
-                ?: error("无法打开 USB 设备（openDevice 返回 null）")
-            var handedOff = false
-            try {
-                selectConfiguration(connection, device)
-                val (iface, epOut, epIn, label) = pickBulk(device)
-                if (!connection.claimInterface(iface, true)) {
-                    error(
-                        "无法占用 ST-LINK 接口（$label）。请拔插 ST-LINK 后重试，确认没有电脑端占用",
-                    )
-                }
-                val session = StLinkUsbSession(connection, iface, epOut, epIn, label)
+            val diagnostics = mutableListOf(
+                "手机=${Build.MANUFACTURER}/${Build.MODEL} Android=${Build.VERSION.RELEASE} API=${Build.VERSION.SDK_INT}",
+                "USB VID=0x${device.vendorId.toString(16)} PID=0x${device.productId.toString(16)} configs=${device.configurationCount}",
+            )
+            var lastError: Exception? = null
+            // Compatibility selection is ONLY a read-only GET_VERSION handshake on a fresh connection.
+            // Once selected, the entire session uses that strategy and never replays commands.
+            for (mode in UsbTransferMode.entries) {
+                var connection: UsbDeviceConnection? = null
+                var iface: UsbInterface? = null
+                var io: AndroidUsbBulkIo? = null
                 try {
+                    diagnostics += "尝试=$mode"
+                    connection = manager.openDevice(device) ?: error("openDevice 返回 null")
+                    diagnostics += "openDevice fd=${connection.fileDescriptor}"
+                    selectConfiguration(connection, device, mode == UsbTransferMode.DIRECT_REQUEST, diagnostics)
+                    val pick = pickBulk(device)
+                    iface = pick.iface
+                    val claimed = connection.claimInterface(iface, true)
+                    diagnostics += "claim=${claimed} ${pick.label} OUTpacket=${pick.epOut.maxPacketSize} INpacket=${pick.epIn.maxPacketSize}"
+                    check(claimed) { "无法占用 ST-LINK 接口" }
+                    if (iface.alternateSetting != 0) {
+                        check(connection.setInterface(iface)) { "无法选择接口 alternate=${iface.alternateSetting}" }
+                    }
+                    if (mode == UsbTransferMode.DIRECT_REQUEST) {
+                        // Discard only possible replies from the failed, read-only handshake, never from a flash session.
+                        for (index in 0 until 2) {
+                            val drained = connection.bulkTransfer(pick.epIn, ByteArray(64), 64, 50)
+                            if (drained <= 0) break
+                            diagnostics += "清理 GET_VERSION 残留应答=$drained"
+                        }
+                    }
+                    val label = "$mode ${pick.label}"
+                    io = AndroidUsbBulkIo(connection, pick.epOut, pick.epIn, mode) { diagnostics += it }
+                    val session = StLinkUsbSession(connection, iface, pick.epOut, pick.epIn, label, io)
                     session.smokeGetVersion()
-                } catch (error: Throwable) {
-                    runCatching { session.close() }
-                    handedOff = true // connection already closed by session.close()
-                    throw IllegalStateException(
-                        "ST-LINK 无法通信（$label）：${error.message ?: error.javaClass.simpleName}。" +
-                            "请拔插 ST-LINK 后重试，确认没有电脑端占用",
-                        error,
-                    )
+                    io.traceEnabled = false
+                    return session
+                } catch (error: Exception) {
+                    lastError = error
+                    diagnostics += "失败=${error.message}"
+                    diagnostics += "仍连接=${manager.deviceList.values.any { it.deviceId == device.deviceId }}"
+                    io?.close()
+                    iface?.let { selected -> runCatching { connection?.releaseInterface(selected) } }
+                    runCatching { connection?.close() }
                 }
-                handedOff = true
-                return session
-            } catch (error: Throwable) {
-                if (!handedOff) runCatching { connection.close() }
-                throw error
             }
+            throw IllegalStateException(
+                "ST-LINK USB 握手未通过，尚未识别或擦写芯片。\n" + diagnostics.joinToString("\n"), lastError)
         }
 
-        /** Many Android hosts fail bulkTransfer with -1 if configuration was never selected. */
-        private fun selectConfiguration(connection: UsbDeviceConnection, device: UsbDevice) {
-            if (device.configurationCount <= 0) return
-            val config = device.getConfiguration(0)
-            // false often means "already this configuration" — not fatal.
-            connection.setConfiguration(config)
+        private fun currentConfiguration(connection: UsbDeviceConnection, trace: MutableList<String>): Int? {
+            val data = ByteArray(1)
+            val count = connection.controlTransfer(0x80, 8, 0, 0, data, 1, CONTROL_TIMEOUT_MS)
+            val value = if (count == 1) data[0].toInt() and 255 else null
+            trace += "GET_CONFIGURATION count=$count value=${value ?: "未知"}"
+            return value
+        }
+
+        private fun selectConfiguration(
+            connection: UsbDeviceConnection,
+            device: UsbDevice,
+            tryIfUnknown: Boolean,
+            trace: MutableList<String>,
+        ) {
+            require(device.configurationCount > 0) { "USB 设备没有 configuration" }
+            val desired = device.getConfiguration(0)
+            val current = currentConfiguration(connection, trace)
+            trace += "配置 index=0 value=${desired.id} interfaces=${desired.interfaceCount}"
+            if (!StLinkUsbLayout.needsConfigurationSwitch(current, desired.id, tryIfUnknown)) {
+                trace += if (current == desired.id) "保留当前已生效配置" else "配置不可读，先使用系统已选择的配置"
+                return
+            }
+            val changed = connection.setConfiguration(desired)
+            trace += "SET_CONFIGURATION(${desired.id}) result=$changed"
+            val after = currentConfiguration(connection, trace)
+            check(after == desired.id || changed && after == null) { "USB 配置选择失败，不能开始传输" }
         }
 
         private data class BulkPick(
@@ -357,7 +338,7 @@ class StLinkUsbSession private constructor(
             val epIn = findEp(iface, chosen.inAddr, UsbConstants.USB_DIR_IN)
                 ?: error("接口上找不到 IN 0x${chosen.inAddr.toString(16)}")
             val label =
-                "pid=0x${device.productId.toString(16)} cfg=0 ${chosen.describe()}"
+                "pid=0x${device.productId.toString(16)} cfgIndex=0 cfgValue=${device.getConfiguration(0).id} ${chosen.describe()} alt=${iface.alternateSetting}"
             return BulkPick(iface, epOut, epIn, label)
         }
 

@@ -16,6 +16,13 @@ object StLinkUsbLayout {
             "iface=$interfaceIndex OUT=0x${outAddr.toString(16)} IN=0x${inAddr.toString(16)}"
     }
 
+    /** A known active configuration must not be reset on every open. */
+    fun needsConfigurationSwitch(current: Int?, desired: Int, tryIfUnknown: Boolean = false): Boolean {
+        require(desired in 1..255)
+        require(current == null || current in 0..255)
+        return current?.let { it != desired } ?: tryIfUnknown
+    }
+
     /** Classic V2 clones use 0x02/0x81; V2-1 / many Nucleo boards use 0x01/0x81. */
     fun preferredOutIn(productId: Int): Pair<Int, Int> = when (productId and 0xFFFF) {
         0x3748 -> 0x02 to 0x81

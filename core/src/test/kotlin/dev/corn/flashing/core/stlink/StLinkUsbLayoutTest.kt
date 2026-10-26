@@ -59,4 +59,17 @@ class StLinkUsbLayoutTest {
             assertTrue(e.message!!.contains("bulk"))
         }
     }
+    @Test fun doesNotResetTheAlreadyActiveConfiguration() {
+        assertFalse(StLinkUsbLayout.needsConfigurationSwitch(1, 1))
+        assertFalse(StLinkUsbLayout.needsConfigurationSwitch(1, 1, tryIfUnknown = true))
+        assertTrue(StLinkUsbLayout.needsConfigurationSwitch(0, 1))
+        assertTrue(StLinkUsbLayout.needsConfigurationSwitch(2, 1))
+    }
+
+    @Test fun unknownConfigurationUsesSystemDefaultBeforeExplicitCompatibilityAttempt() {
+        assertFalse(StLinkUsbLayout.needsConfigurationSwitch(null, 1))
+        assertTrue(StLinkUsbLayout.needsConfigurationSwitch(null, 1, tryIfUnknown = true))
+        assertThrows(IllegalArgumentException::class.java) { StLinkUsbLayout.needsConfigurationSwitch(1, 0) }
+    }
+
 }

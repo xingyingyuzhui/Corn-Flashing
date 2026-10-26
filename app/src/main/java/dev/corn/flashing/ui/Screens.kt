@@ -1,5 +1,8 @@
 package dev.corn.flashing.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -272,10 +275,10 @@ fun ConfigTab(vm: FlashViewModel) {
     ScrollBody {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Chip(p.name.take(22), ChipTone.WARN, dot = true)
-            Chip("重新识别", onClick = {
+            Chip(if (state.probing) "识别中…" else "重新识别", onClick = if (state.probing || state.running) null else ({
                 if (prefs.simulator) vm.notify("模拟模式：演示板固定 0x410 · 64 KB")
                 else vm.probeChip()
-            })
+            }))
         }
         CornCard {
             Label("目标芯片（自动匹配）")
@@ -330,6 +333,7 @@ fun ConfigTab(vm: FlashViewModel) {
 @Composable
 fun DevicesTab(vm: FlashViewModel, devices: List<UsbProbe>) {
     val usbMessage by vm.usbMessage.collectAsStateWithLifecycle()
+    val state by vm.session.collectAsStateWithLifecycle()
     TopBar("设备", if (vm.hostSupported) "USB Host 可用 · 插拔自动刷新" else "本机不支持 USB Host")
     ScrollBody {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -348,6 +352,9 @@ fun DevicesTab(vm: FlashViewModel, devices: List<UsbProbe>) {
             T(usbMessage, CornColors.Mute, 11.sp)
         }
         devices.forEach { DeviceCard(it, vm) }
+        state.usbDiagnostic?.takeIf { it.isNotBlank() }?.let { diagnostic ->
+            UsbDiagnosticCard(diagnostic, vm)
+        }
         val denied by vm.usbDenied.collectAsStateWithLifecycle()
         val hasUnauthorizedCandidate = devices.any { it.candidate && !it.permissionGranted }
         if (denied && hasUnauthorizedCandidate) {
@@ -369,12 +376,37 @@ fun DevicesTab(vm: FlashViewModel, devices: List<UsbProbe>) {
 }
 
 @Composable
+private fun UsbDiagnosticCard(diagnostic: String, vm: FlashViewModel) {
+    val context = LocalContext.current
+    val preview = remember(diagnostic) {
+        diagnostic.lineSequence().take(12).joinToString("\n").take(1600)
+    }
+    CornCard(spacing = 10.dp) {
+        Label("USB 诊断")
+        T("当前信息用于排查 USB 通信，不能据此认定控制板损坏。", CornColors.Dim, 12.sp)
+        T(preview, CornColors.Mute, 11.sp, mono = true, maxLines = 12)
+        if (preview.length < diagnostic.length) {
+            T("这里只展示部分内容，复制可获取完整诊断。", CornColors.Mute, 11.sp)
+        }
+        CornButton("复制 USB 诊断", {
+            try {
+                val clipboard = context.getSystemService(ClipboardManager::class.java)
+                clipboard.setPrimaryClip(ClipData.newPlainText("Corn Flashing USB 诊断", diagnostic))
+                vm.notify("已复制完整 USB 诊断")
+            } catch (_: Exception) {
+                vm.notify("复制失败，请重试")
+            }
+        }, Modifier.fillMaxWidth(), height = 44)
+    }
+}
+
+@Composable
 private fun DeviceCard(d: UsbProbe, vm: FlashViewModel) {
     val state by vm.session.collectAsStateWithLifecycle()
     val prefs = vm.prefs
     val target = state.target
     val border = if (d.candidate && d.permissionGranted) CornColors.Leaf.copy(alpha = .5f) else CornColors.Line
-    val canProbe = d.candidate && d.permissionGranted && !prefs.simulator && !state.running
+    val canProbe = d.candidate && d.permissionGranted && !prefs.simulator && !state.running && !state.probing
     CornCard(Modifier.alpha(if (d.candidate) 1f else .55f), border = border, spacing = 10.dp) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(CornColors.Surface2), contentAlignment = Alignment.Center) {
@@ -414,12 +446,17 @@ private fun DeviceCard(d: UsbProbe, vm: FlashViewModel) {
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CornButton(
-                    if (target == null) "识别芯片" else "重新识别",
+                    when {
+                        state.probing -> "识别中…"
+                        target == null -> "识别芯片"
+                        else -> "重新识别"
+                    },
                     {
                         when {
                             prefs.simulator -> vm.notify("模拟模式：请到工作台使用演示板，或关闭模拟后再识别真芯片")
                             !d.permissionGranted -> vm.notify("请先授权 ST-LINK")
                             state.running -> vm.notify("烧录进行中，稍后再识别")
+                            state.probing -> vm.notify("识别中，请稍候")
                             else -> vm.probeChip()
                         }
                     },

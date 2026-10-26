@@ -90,22 +90,25 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startSingle() {
-        if (!batchGuard()) return
+        if (session.value.probing || !batchGuard()) return
         viewModelScope.launch {
             val id = repository.prepareJob(singleRequest()) ?: return@launch
             if (!app.launcher.start(id)) repository.startFailed("系统拒绝启动任务服务")
         }
     }
 
+    private var probingJob: kotlinx.coroutines.Job? = null
+
     /** Identify the chip on the authorized ST-LINK without erasing. */
     fun probeChip() {
-        viewModelScope.launch {
+        if (probingJob?.isActive == true || session.value.running || session.value.probing) return
+        probingJob = viewModelScope.launch {
             try {
                 val target = repository.probeChip()
                 _notice.value = "已识别 ${target.family} · ${target.flashSizeBytes / 1024} KB"
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
-                _notice.value = "识别失败：${error.message}"
+                _notice.value = "识别失败，完整信息见设备页 USB 诊断"
             }
         }
     }

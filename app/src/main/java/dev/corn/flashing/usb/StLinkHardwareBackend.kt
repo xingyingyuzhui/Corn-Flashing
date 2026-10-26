@@ -14,6 +14,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Real ST-LINK/V2 path: probe + STM32F1 page erase / half-word program / readback.
@@ -32,20 +34,20 @@ class StLinkHardwareBackend(
     val voltageMv: Int get() = lastVoltageMv
     val probed: TargetInfo? get() = lastTarget
 
-    override suspend fun probe(): TargetInfo = withContext(Dispatchers.IO) {
+    override suspend fun probe(): TargetInfo = sessionMutex.withLock { withContext(Dispatchers.IO) {
         StLinkUsbSession.open(manager, device).use { session ->
             val target = session.identify()
             lastVoltageMv = session.voltageMv
             lastTarget = target
             target
         }
-    }
+    } }
 
     override suspend fun execute(
         plan: FlashPlan,
         options: FlashExecuteOptions,
         onProgress: (FlashProgress) -> Unit,
-    ) = withContext(Dispatchers.IO) {
+    ) = sessionMutex.withLock { withContext(Dispatchers.IO) {
         onProgress(FlashProgress(FlashStage.CONNECTING, 0.05f, "连接 ${displayName}"))
         StLinkUsbSession.open(manager, device).use { session ->
             currentCoroutineContext().ensureActive()
@@ -84,7 +86,7 @@ class StLinkHardwareBackend(
                 throw FlashFailure(FlashStage.PROBING, error.message ?: "烧录预检失败")
             }
         }
-    }
+    } }
 
     private fun erasePages(plan: FlashPlan, options: FlashExecuteOptions): List<Long> {
         if (options.eraseMode != 1) return plan.erasePageAddresses
@@ -107,6 +109,8 @@ class StLinkHardwareBackend(
     }
 
     companion object {
+        // All backend instances share the same physical USB bus/probe access boundary.
+        private val sessionMutex = Mutex()
         fun findAuthorized(manager: UsbManager, candidates: List<UsbProbe>): UsbDevice? {
             val authorizedIds = candidates.filter { it.candidate && it.permissionGranted }.map { it.connectionId }.toSet()
             return manager.deviceList.values.firstOrNull { device ->

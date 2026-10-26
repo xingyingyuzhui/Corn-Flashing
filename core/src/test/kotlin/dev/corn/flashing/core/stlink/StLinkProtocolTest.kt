@@ -131,4 +131,10 @@ class StLinkProtocolTest {
         assertThrows(IllegalArgumentException::class.java) { StLinkProtocol.readMem8(0x08000001, 65) }
     }
 
+    @Test fun skipsUnsupportedVoltageCommandInsteadOfIgnoringTransportFailure() {
+        assertFalse(StLinkVersion(2, 12, 0, byteArrayOf()).supportsTargetVoltage)
+        assertTrue(StLinkVersion(2, 13, 0, byteArrayOf()).supportsTargetVoltage)
+        assertTrue(StLinkVersion(2, 26, 0, byteArrayOf()).supportsTargetVoltage)
+    }
+
 }

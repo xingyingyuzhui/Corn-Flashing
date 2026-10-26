@@ -35,6 +35,8 @@ data class JobRequest(
 data class SessionState(
     val ready: Boolean = false,
     val importing: Boolean = false,
+    val probing: Boolean = false,
+    val usbDiagnostic: String? = null,
     val firmware: ImportedFirmware? = null,
     val importError: String? = null,
     val running: Boolean = false,
@@ -273,9 +275,11 @@ class FlashRepository(
             throw cancelled
         } catch (failure: FlashFailure) {
             failedStage = failure.stage
+            if (!request.useSimulator) _state.update { it.copy(usbDiagnostic = failure.message) }
             record = record.copy(status = "FAILED", stage = "停在「${stageLabel(failure.stage)}」", message = failure.message ?: "未知错误")
         } catch (error: Exception) {
             failedStage = _state.value.flashStage
+            if (!request.useSimulator) _state.update { it.copy(usbDiagnostic = error.message) }
             record = record.copy(status = "FAILED", stage = "任务失败", message = error.message ?: "未知错误")
         } finally {
             record = record.copy(finishedAt = System.currentTimeMillis())
@@ -291,19 +295,30 @@ class FlashRepository(
 
     /** Identify the attached chip without erasing. Updates [SessionState.target] on success. */
     suspend fun probeChip(): TargetInfo = withContext(Dispatchers.IO) {
-        val backend = realBackend.open() ?: error("未找到已授权的 ST-LINK")
-        val target = backend.probe()
-        val mv = (backend as? StLinkHardwareBackend)?.voltageMv ?: 0
-        saveProbedTarget(target)
-        _state.update {
-            it.copy(
-                target = target,
-                voltageMv = mv,
-                message = "已自动匹配 ${ProductProfiles.alignedTo(ProductProfiles.F103_OPEN, target).name}" +
-                    (target.uid?.let { u -> " · $u" } ?: ""),
-            )
+        _state.update { it.copy(probing = true) }
+        try {
+            val backend = realBackend.open() ?: error("未找到已授权的 ST-LINK")
+            val target = backend.probe()
+            val mv = (backend as? StLinkHardwareBackend)?.voltageMv ?: 0
+            saveProbedTarget(target)
+            _state.update {
+                it.copy(
+                    target = target,
+                    voltageMv = mv,
+                    usbDiagnostic = null,
+                    message = "已自动匹配 ${ProductProfiles.alignedTo(ProductProfiles.F103_OPEN, target).name}" +
+                        (target.uid?.let { u -> " · $u" } ?: ""),
+                )
+            }
+            target
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            _state.update { it.copy(usbDiagnostic = error.message ?: error.javaClass.simpleName) }
+            throw error
+        } finally {
+            _state.update { it.copy(probing = false) }
         }
-        target
     }
 
     private fun saveProbedTarget(target: TargetInfo) {

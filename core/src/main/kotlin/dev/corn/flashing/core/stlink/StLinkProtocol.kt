@@ -290,6 +290,7 @@ data class StLinkVersion(val stlink: Int, val jtag: Int, val swim: Int, val raw:
     val label: String get() = "V$stlink J$jtag"
     val supportsHalfWordWrite: Boolean get() = stlink == 2 && jtag >= 26
     val needsApInit: Boolean get() = stlink == 2 && jtag >= 28
+    val supportsTargetVoltage: Boolean get() = stlink == 2 && jtag >= 13 || stlink == 3
 
     fun requireF1ProgrammingSupport() {
         require(supportsHalfWordWrite) {
