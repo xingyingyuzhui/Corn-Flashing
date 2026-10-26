@@ -260,7 +260,8 @@ fun FlashGrid(fw: ImportedFirmware, profile: ProductProfile) {
 fun ConfigTab(vm: FlashViewModel) {
     val reserved by vm.reservedSettings.collectAsStateWithLifecycle()
     val bindings by vm.algorithmBindings.collectAsStateWithLifecycle()
-    val registry = remember(bindings) { vm.targetRegistry }
+    val experimentalEnabled by vm.experimentalAlgorithmsEnabled.collectAsStateWithLifecycle()
+    val registry = remember(bindings, experimentalEnabled) { vm.targetRegistry }
     val state by vm.session.collectAsStateWithLifecycle()
     val p = vm.profile
     val prefs = vm.prefs
@@ -268,6 +269,7 @@ fun ConfigTab(vm: FlashViewModel) {
     TopBar("产品配置", "设备组与容量按探测自动匹配") {
         when {
             prefs.simulator -> SimMark()
+            probed != null && registry.find(probed.deviceId)?.algorithmId?.startsWith("flm-") == true -> Chip("实验 · 未验证", ChipTone.WARN)
             probed != null && registry.find(probed.deviceId)?.support == TargetSupport.FLASH_ALGORITHM -> Chip("算法已匹配", ChipTone.OK, dot = true)
             probed != null -> Chip("仅识别", ChipTone.WARN, dot = true)
             else -> Chip("未探测", ChipTone.WARN)
@@ -309,7 +311,9 @@ fun ConfigTab(vm: FlashViewModel) {
                         T("设备组 0x${descriptor.deviceId.toString(16)}", CornColors.Mute, 11.sp, mono = true)
                     }
                     val programmable = descriptor.support == TargetSupport.FLASH_ALGORITHM
-                    Chip(if (programmable) "算法已接入" else "仅识别", if (programmable) ChipTone.OK else ChipTone.WARN)
+                    val external = descriptor.algorithmId?.startsWith("flm-") == true
+                    Chip(if (external) "实验 · 未验证" else if (programmable) "算法已接入" else "仅识别",
+                        if (programmable && !external) ChipTone.OK else ChipTone.WARN)
                 }
             }
             DividerLine()
@@ -321,9 +325,11 @@ fun ConfigTab(vm: FlashViewModel) {
         ReservedRegionCard(vm)
         CornCard(spacing = 10.dp) {
             Row { Label("擦除", Modifier.weight(1f)); T("按下方偏好执行", CornColors.Mute, 11.sp) }
-            Seg(listOf("只擦用到的页", "整片擦除"), prefs.eraseMode, { prefs.eraseMode = it })
+            Seg(listOf("只擦用到的页", "全部非保留区"), prefs.eraseMode, { prefs.eraseMode = it })
+            T("全部非保留区：逐扇区擦除，跳过已生效的保留区。", CornColors.Mute, 11.5.sp)
             Label("校验")
-            Seg(listOf("回读全部", "CRC32", "不校验"), prefs.verifyMode, { prefs.verifyMode = it })
+            Seg(listOf("回读全部", "不校验"), VerificationPreferences.uiIndex(prefs.verifyMode),
+                { prefs.verifyMode = VerificationPreferences.storedValue(it) })
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 T("SWD 速率", CornColors.Dim, 13.sp, modifier = Modifier.weight(1f))
                 T("探针默认速率", size = 13.sp, weight = FontWeight.SemiBold)
@@ -332,7 +338,7 @@ fun ConfigTab(vm: FlashViewModel) {
         Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(CornColors.Surface1)
             .border(1.dp, CornColors.Line, RoundedCornerShape(16.dp)).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Ico(Lucide.Shield, CornColors.Leaf, 18.dp)
-            T("读保护与 Option Bytes：不修改。需要改动时请用电脑上的 STM32CubeProgrammer。", CornColors.Dim, 12.sp)
+            T("内置烧录路径不修改读保护与 Option Bytes；外部 FLM 在芯片上执行，其行为不受此保证约束。", CornColors.Dim, 12.sp)
         }
     }
 }

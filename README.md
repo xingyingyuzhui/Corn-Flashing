@@ -1,21 +1,23 @@
 # Corn Flashing
 
-正式版：**0.1.7**（versionCode 21）。本版修复系统底部手势区域的沉浸效果，保留悬浮 dock 的安全间距，详见 [沉浸修复说明](docs/navigation-bar-immersion-fix.md)。保留 0.1.6 的参数保留区、CMSIS-Pack/FLM 算法导入与可扩展兼容性引擎。
+正式版：**0.1.8**（versionCode 23）。本版收紧外部 FLM 实验执行入口并修正校验/擦除文案，详见 [0.1.8 验证记录](docs/test-build-0.1.8-test1.md)。保留此前的沉浸式界面、参数保留区和可扩展兼容性引擎。
+
+外部 FLM 实验执行每次进程启动默认关闭，旧绑定停用；开启会恢复已保存的绑定，新绑定需明确确认，仍无具体料号实板兼容保证。移除未实现的 CRC32 校验选项（旧偏好迁移为全量回读），擦除选项改为“全部非保留区”。[Thumb 模拟验证现可从仓库复现](docs/thumb-runtime-validation.md)。
 
 Android 离线单片机烧录工具的基础框架。目标为 ST-LINK/V2 + STM32F103，后续扩展其他探针和多路批量。
 
 **公开源码 · 非商业授权：[PolyForm Noncommercial 1.0.0](LICENSE)。**
 
-**0.1.6：真实 ST-LINK/V2 可识别并擦写 STM32F1（页擦除 / 半字编程 / 回读）；F0/F4 指定设备组仅识别；可导入 CMSIS-Pack/FLM 算法；参数保留区默认关闭。不改 Option Bytes。**
+**真实 ST-LINK/V2 可识别并擦写 STM32F1（页擦除 / 半字编程 / 回读）；F0/F4 指定设备组默认仅识别；可导入 CMSIS-Pack/FLM 算法；参数保留区默认关闭。内置路径不改 Option Bytes，外部 FLM 不受此保证约束。**
 
 ## 安装包
 
-安装包在 GitHub Release [v0.1.7](https://github.com/xingyingyuzhui/Corn-Flashing/releases/tag/v0.1.7)，APK 不入库。
+安装包在 GitHub Release [v0.1.8](https://github.com/xingyingyuzhui/Corn-Flashing/releases/tag/v0.1.8)，APK 不入库。
 
-- [`Corn-Flashing-0.1.7.apk`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.7/Corn-Flashing-0.1.7.apk)：日常安装（模拟烧录 + 真实 ST-LINK F1 烧录；本机 Debug 密钥签名）。
-- [`Corn-Flashing-0.1.7.apk.sha256`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.7/Corn-Flashing-0.1.7.apk.sha256)：安装包校验值。
+- [`Corn-Flashing-0.1.8.apk`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.8/Corn-Flashing-0.1.8.apk)：日常安装（模拟烧录 + 真实 ST-LINK F1 烧录；本机 Debug 密钥签名）。
+- [`Corn-Flashing-0.1.8.apk.sha256`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.8/Corn-Flashing-0.1.8.apk.sha256)：安装包校验值。
 
-> **升级提示**：0.1.7 沿用 0.1.6 的签名，可覆盖升级。v0.1.5 及更早版本使用不同签名密钥，需先卸载旧包（会清空任务记录与保留区设置）。
+> **升级提示**：0.1.8 沿用 0.1.6/0.1.7 的签名，可覆盖升级（包括 0.1.8-test1）。v0.1.5 及更早版本使用不同签名密钥，需先卸载旧包（会清空任务记录与保留区设置）。
 
 ## 已实现
 

@@ -1,0 +1,2 @@
+# CPU-only validation; not an Android runtime dependency.
+unicorn==2.1.4

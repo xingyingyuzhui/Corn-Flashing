@@ -36,4 +36,11 @@ class Prefs(context: Context) {
     var eraseMode by choice("erase", 0)
     var verifyMode by choice("verify", 0)
     var preset by choice("preset", 0)
+
+    init {
+        // Legacy index 1 was labelled CRC32 but always performed full readback.
+        // Keep that protection when migrating to the two-option UI; skip remains index 2.
+        val normalized = VerificationPreferences.normalize(verifyMode)
+        if (verifyMode != normalized) verifyMode = normalized
+    }
 }
