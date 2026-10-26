@@ -1,5 +1,11 @@
 # 基础框架交付状态
 
+## 2026-10-26 · 发布 v0.1.4（合并 fix-stlink-usb-config）
+
+- PR #5 已合入 main；versionCode 6 / versionName 0.1.4。
+- ST-LINK USB：setConfiguration + 端点扫描 + 重试；失败页电压诚实化。
+- 复查 stub：未开放控件禁用/标注；真实擦写留给 0.1.5。详见 docs/review-0.1.4.md。
+
 ## 2026-10-26 · 发布 v0.1.3（合并 fix-device-probe-statusbar）
 
 - PR #4 已合入 main；versionCode 5 / versionName 0.1.3。
