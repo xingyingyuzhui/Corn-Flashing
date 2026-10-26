@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import dev.corn.flashing.core.*
+import dev.corn.flashing.usb.StLinkHardwareBackend
 import kotlinx.coroutines.*
 
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -46,6 +47,8 @@ data class SessionState(
     val job: JobEntity? = null,
     /** Stage a failed job stopped at, for the result view. */
     val failedStage: FlashStage? = null,
+    /** Last target voltage from a real probe, millivolts; 0 if unknown / sim. */
+    val voltageMv: Int = 0,
 )
 
 /** Starts the foreground service for a prepared job; false if Android refused (e.g. app in background). */
@@ -241,10 +244,11 @@ class FlashRepository(
                     ?: error("未找到已授权的 ST-LINK，请在设备页授权后再试")
             }
             val target = backend.probe()
+            val mv = (backend as? StLinkHardwareBackend)?.voltageMv ?: 0
             if (!backend.isSimulation) saveProbedTarget(target)
             val plan = FlashPlanner.plan(firmware.image, ProductProfiles.F103_OPEN, target)
             record = record.copy(targetUid = target.uid, mode = if (backend.isSimulation) "DEMO" else "STLINK")
-            _state.update { it.copy(target = target, plan = plan) }
+            _state.update { it.copy(target = target, plan = plan, voltageMv = mv) }
             backend.execute(plan) { event ->
                 _state.update { it.copy(progress = event.fraction, flashStage = event.stage, stage = stageLabel(event.stage), message = event.message) }
             }
@@ -281,10 +285,12 @@ class FlashRepository(
     suspend fun probeChip(): TargetInfo = withContext(Dispatchers.IO) {
         val backend = realBackend.open() ?: error("未找到已授权的 ST-LINK")
         val target = backend.probe()
+        val mv = (backend as? StLinkHardwareBackend)?.voltageMv ?: 0
         saveProbedTarget(target)
         _state.update {
             it.copy(
                 target = target,
+                voltageMv = mv,
                 message = "已自动匹配 ${ProductProfiles.alignedTo(ProductProfiles.F103_OPEN, target).name}" +
                     (target.uid?.let { u -> " · $u" } ?: ""),
             )
