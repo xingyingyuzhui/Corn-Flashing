@@ -177,12 +177,14 @@ fun CornApp(vm: FlashViewModel) {
                         withNotifications = withNotifications)
                 }
                 else -> Box(Modifier.fillMaxSize()) {
-                  // The floating dock overlays the scrolling content, and the system gesture bar sits
-                  // below it. Reserve dock height + spacing + the real navigation-bar inset, otherwise
-                  // the last row of every tab scrolls under the gesture handle.
+                  // Draw the scrolling page through the gesture area. Only interactive dock content
+                  // avoids it; trailing scroll clearance accounts for that inset exactly once.
                   val navInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
                   Scaffold(
                     containerColor = CornColors.Background,
+                    contentWindowInsets = WindowInsets.safeDrawing.only(
+                        WindowInsetsSides.Top + WindowInsetsSides.Horizontal,
+                    ),
                 ) { padding ->
                   CompositionLocalProvider(LocalDockClearance provides DockClearance + navInset) {
                     Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
