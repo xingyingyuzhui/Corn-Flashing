@@ -16,6 +16,7 @@ import dev.corn.flashing.core.stlink.StLinkUsbLayout
 import dev.corn.flashing.core.stlink.StLinkVersion
 import dev.corn.flashing.core.stlink.StLinkBulkTransfers
 import android.os.Build
+import dev.corn.flashing.core.stlink.UsbKernelErrors
 import java.io.Closeable
 
 /**
@@ -232,13 +233,19 @@ class StLinkUsbSession private constructor(
         fun open(manager: UsbManager, device: UsbDevice): StLinkUsbSession {
             require(manager.hasPermission(device)) { "尚未获得 USB 授权" }
             val diagnostics = mutableListOf(
-                "手机=${Build.MANUFACTURER}/${Build.MODEL} Android=${Build.VERSION.RELEASE} API=${Build.VERSION.SDK_INT}",
+                "手机=${Build.MANUFACTURER}/${Build.MODEL} Android=${Build.VERSION.RELEASE} API=${Build.VERSION.SDK_INT} ABI=${Build.SUPPORTED_ABIS.joinToString()}",
+                NativeUsbFs.availabilityDescription,
                 "USB VID=0x${device.vendorId.toString(16)} PID=0x${device.productId.toString(16)} configs=${device.configurationCount}",
             )
             var lastError: Exception? = null
             // Compatibility selection is ONLY a read-only GET_VERSION handshake on a fresh connection.
             // Once selected, the entire session uses that strategy and never replays commands.
-            for (mode in UsbTransferMode.entries) {
+            val attempts = java.util.ArrayDeque(UsbTransferMode.entries)
+            val recoveredEndpoints = mutableSetOf<Int>()
+            var recoveryRetryAdded = false
+            while (attempts.isNotEmpty()) {
+                val mode = attempts.removeFirst()
+                var endpointAddresses: List<Int> = emptyList()
                 var connection: UsbDeviceConnection? = null
                 var iface: UsbInterface? = null
                 var io: AndroidUsbBulkIo? = null
@@ -246,7 +253,7 @@ class StLinkUsbSession private constructor(
                     diagnostics += "尝试=$mode"
                     connection = manager.openDevice(device) ?: error("openDevice 返回 null")
                     diagnostics += "openDevice fd=${connection.fileDescriptor}"
-                    selectConfiguration(connection, device, mode == UsbTransferMode.DIRECT_REQUEST, diagnostics)
+                    selectConfiguration(connection, device, mode != UsbTransferMode.BULK, diagnostics)
                     val pick = pickBulk(device)
                     iface = pick.iface
                     val claimed = connection.claimInterface(iface, true)
@@ -255,7 +262,7 @@ class StLinkUsbSession private constructor(
                     if (iface.alternateSetting != 0) {
                         check(connection.setInterface(iface)) { "无法选择接口 alternate=${iface.alternateSetting}" }
                     }
-                    if (mode == UsbTransferMode.DIRECT_REQUEST) {
+                    if (mode != UsbTransferMode.BULK) {
                         // Discard only possible replies from the failed, read-only handshake, never from a flash session.
                         for (index in 0 until 2) {
                             val drained = connection.bulkTransfer(pick.epIn, ByteArray(64), 64, 50)
@@ -263,6 +270,7 @@ class StLinkUsbSession private constructor(
                             diagnostics += "清理 GET_VERSION 残留应答=$drained"
                         }
                     }
+                    endpointAddresses = listOf(pick.epOut.address, pick.epIn.address)
                     val label = "$mode ${pick.label}"
                     io = AndroidUsbBulkIo(connection, pick.epOut, pick.epIn, mode) { diagnostics += it }
                     val session = StLinkUsbSession(connection, iface, pick.epOut, pick.epIn, label, io)
@@ -273,13 +281,56 @@ class StLinkUsbSession private constructor(
                     lastError = error
                     diagnostics += "失败=${error.message}"
                     diagnostics += "仍连接=${manager.deviceList.values.any { it.deviceId == device.deviceId }}"
-                    io?.close()
+                    io?.close() // Cancel/release any URB before issuing native endpoint recovery.
+                    if (io != null && connection != null) {
+                        val kernelFailure = generateSequence<Throwable>(error) { it.cause }
+                            .filterIsInstance<KernelUsbException>().firstOrNull()
+                        val recovered = recoverObservedHalts(connection, endpointAddresses, kernelFailure, recoveredEndpoints, diagnostics)
+                        if (mode == UsbTransferMode.USBFS_NATIVE && recovered && !recoveryRetryAdded) {
+                            recoveryRetryAdded = true
+                            attempts.addLast(UsbTransferMode.USBFS_NATIVE)
+                            diagnostics += "停顿恢复后仅重建一次连接重试 GET_VERSION"
+                        }
+                    }
                     iface?.let { selected -> runCatching { connection?.releaseInterface(selected) } }
                     runCatching { connection?.close() }
                 }
             }
             throw IllegalStateException(
                 "ST-LINK USB 握手未通过，尚未识别或擦写芯片。\n" + diagnostics.joinToString("\n"), lastError)
+        }
+
+        private fun recoverObservedHalts(
+            connection: UsbDeviceConnection,
+            endpoints: List<Int>,
+            failure: KernelUsbException?,
+            recoveredEndpoints: MutableSet<Int>,
+            trace: MutableList<String>,
+        ): Boolean {
+            var recovered = false
+            for (endpoint in endpoints) {
+                try {
+                    val status = ByteArray(2)
+                    val count = connection.controlTransfer(0x82, 0, 0, endpoint, status, 2, CONTROL_TIMEOUT_MS)
+                    val bits = if (count == 2) (status[0].toInt() and 255) or ((status[1].toInt() and 255) shl 8) else null
+                    trace += "GET_STATUS ep=0x${endpoint.toString(16)} count=$count status=${bits ?: "未知"}"
+                    val errno = failure?.takeIf { it.endpoint == endpoint }?.code
+                    if (!UsbKernelErrors.shouldRecoverHalt(errno, bits)) continue
+                    if (!recoveredEndpoints.add(endpoint)) {
+                        trace += "端点再次停顿，不重复恢复 ep=0x${endpoint.toString(16)}"
+                        continue
+                    }
+                    if (!NativeUsbFs.available) {
+                        trace += "已检测端点停顿，但底层恢复模块不可用"
+                        continue
+                    }
+                    trace += NativeUsbFs.recoverHalt(connection.fileDescriptor, endpoint)
+                    recovered = true
+                } catch (error: Exception) {
+                    trace += "端点诊断/恢复失败：${error.message}"
+                }
+            }
+            return recovered
         }
 
         private fun currentConfiguration(connection: UsbDeviceConnection, trace: MutableList<String>): Int? {

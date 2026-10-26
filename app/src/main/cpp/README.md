@@ -1,18 +1,16 @@
-# Native backend integration boundary
+# Authorized USBFS diagnostic transport
 
-No native library is bundled or loaded by this framework. `UnavailableHardwareBackend`
-always rejects execution. `DemoFlashBackend` never opens USB.
+`usbfs_diag.c` implements bulk transfer, endpoint CLEAR_HALT and errno decoding via JNI.
+It borrows only the FD returned by Android's authorized UsbDeviceConnection. It never opens,
+claims, duplicates or closes a device FD. The Kotlin session owns connection and interface lifetime.
 
-The first native implementation should satisfy `core/FlashBackend` and validate:
+CMake 3.22.1 + NDK 27.2.12479018 build four Android ABIs. Linker maximum page size is 16384.
+JNI availability self-tests use fd=-1, returning EBADF before any ioctl; no hardware I/O occurs.
 
-1. Android `UsbManager` permission and open connection → authorized USB FD.
-2. FD → `libusb_wrap_sys_device` → adapted stlink session; no independent device scan/open.
-3. Explicit ownership of `UsbDeviceConnection`, FD, libusb handle and JNI session handle.
-4. Bounded calls, cooperative cancellation, disconnect invalidation and deterministic close.
-5. Real device-group/capacity probing → `FlashPlanner` → page erase/write/read-back verification.
-6. No global mutable session state shared by concurrently running probes.
+The native strategy is considered only during read-only GET_VERSION handshake selection.
+After selection, all protocol operations use that fixed strategy. Failed flash commands are
+never automatically replayed. CLEAR_HALT is only permitted by the handshake coordinator when
+endpoint GET_STATUS reports halt or native bulk returns EPIPE, at most once per endpoint.
 
-Only after these pass on the actual hardware should a CMake/NDK target be introduced and
-hardware actions enabled in the UI. Change the foreground-service type from the current
-simulation-only `shortService` to `connectedDevice` with the appropriate permission and
-USB grant preconditions. Do not reuse the simulation's fixed target or UID.
+No libusb/stlink native dependency is included; the existing Kotlin ST-LINK protocol is retained.
+Root is not requested. The native path exposes errno; it does not bypass Android/OEM permissions.

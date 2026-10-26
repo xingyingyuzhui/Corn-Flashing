@@ -7,7 +7,7 @@ import dev.corn.flashing.core.stlink.StLinkBulkIo
 import java.io.Closeable
 import java.nio.ByteBuffer
 
-internal enum class UsbTransferMode { BULK, DIRECT_REQUEST }
+internal enum class UsbTransferMode { BULK, DIRECT_REQUEST, USBFS_NATIVE }
 
 /** One strategy for the whole session. Never switches APIs or replays a failed command mid-session. */
 internal class AndroidUsbBulkIo(
@@ -30,10 +30,11 @@ internal class AndroidUsbBulkIo(
         val direction = if (output) "OUT" else "IN"
         val start = System.nanoTime()
         try {
-            val count = if (mode == UsbTransferMode.BULK) {
-                connection.bulkTransfer(if (output) epOut else epIn, data, data.size, TIMEOUT_MS)
-            } else {
-                directTransfer(data, output)
+            val endpoint = if (output) epOut else epIn
+            val count = when (mode) {
+                UsbTransferMode.BULK -> connection.bulkTransfer(endpoint, data, data.size, TIMEOUT_MS)
+                UsbTransferMode.DIRECT_REQUEST -> directTransfer(data, output)
+                UsbTransferMode.USBFS_NATIVE -> NativeUsbFs.transfer(connection.fileDescriptor, endpoint.address, data, TIMEOUT_MS)
             }
             if (traceEnabled) trace("$mode $direction requested=${data.size} actual=$count elapsedMs=${(System.nanoTime() - start) / 1_000_000}")
             return count

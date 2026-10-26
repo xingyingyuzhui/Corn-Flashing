@@ -5,13 +5,17 @@ plugins {
 }
 android {
     namespace = "dev.corn.flashing"
+    ndkVersion = "27.2.12479018"
+    externalNativeBuild {
+        cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" }
+    }
     compileSdk { version = release(37) { minorApiLevel = 2 } }
     defaultConfig {
         applicationId = "dev.corn.flashing"
         minSdk = 29
         targetSdk { version = release(37) }
-        versionCode = 9
-        versionName = "0.1.6-test2"
+        versionCode = 10
+        versionName = "0.1.6-test3"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

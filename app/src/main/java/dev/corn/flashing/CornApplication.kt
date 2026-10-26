@@ -32,6 +32,7 @@ class CornApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        android.util.Log.i("CornUsb", dev.corn.flashing.usb.NativeUsbFs.availabilityDescription)
         registerActivityLifecycleCallbacks(ForegroundTracker())
         val database = Room.databaseBuilder(this, FlashDatabase::class.java, "corn-flashing.db").build()
         usb = UsbProbeMonitor(this)
