@@ -800,7 +800,7 @@ private fun voltageLabel(vm: FlashViewModel, state: SessionState): String {
     return when {
         sim -> "3.30 V · 模拟"
         state.voltageMv > 0 -> "%.2f V".format(state.voltageMv / 1000.0)
-        else -> "—"
+        else -> "未知（未读取）"
     }
 }
 

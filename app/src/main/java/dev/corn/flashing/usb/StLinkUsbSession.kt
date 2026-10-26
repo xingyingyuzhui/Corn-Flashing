@@ -55,9 +55,10 @@ class StLinkUsbSession private constructor(
         } else if (mode == StLinkProtocol.MODE_DEBUG) {
             xferOut(StLinkProtocol.exitDebug())
         }
-        voltageMv = if (version?.supportsTargetVoltage == true) {
-            StLinkProtocol.parseVoltageMv(xfer(StLinkProtocol.getTargetVoltage(), 8))
-        } else 0
+        // Optional telemetry is deliberately not queried on this compatibility build.
+        // Some V2 probes advertise firmware support but fail F7; do not poison the SWD session.
+        // Zero means unmeasured, never zero-voltage or a disconnected target.
+        voltageMv = 0
 
         val enter = xfer(StLinkProtocol.enterSwd(), 2)
         StLinkProtocol.requireStatusOk(enter, "进入 SWD")
