@@ -1,6 +1,11 @@
 # 基础框架交付状态
 
-## 2026-10-26 · stlink-probe-v1（未合并）
+## 2026-10-26 · 发布 v0.1.1（合并 stlink-probe-v1）
+
+- PR #2 已合入 main；versionCode 3 / versionName 0.1.1。
+- Debug APK 双文件名（与 0.1.0 相同签名方式）。
+
+## 2026-10-26 · stlink-probe-v1（已合并为 v0.1.1）
 
 - 状态栏：深色 App + 系统浅色时强制浅色状态栏 / 导航栏图标。
 - 真实探测：授权 ST-LINK/V2 后可在工作台「识别芯片」或开始烧录时走 Kotlin USB bulk → SWD，读取设备组、Flash 容量、UID。

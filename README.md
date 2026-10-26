@@ -8,10 +8,10 @@ Android 离线单片机烧录工具的基础框架。目标为 ST-LINK/V2 + STM3
 
 ## 安装包
 
-安装包在 GitHub Release [v0.1.0](https://github.com/xingyingyuzhui/Corn-Flashing/releases/tag/v0.1.0)，APK 不入库。
+安装包在 GitHub Release [v0.1.1](https://github.com/xingyingyuzhui/Corn-Flashing/releases/tag/v0.1.1)，APK 不入库。
 
-- [`Corn-Flashing-0.1.0.apk`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.0/Corn-Flashing-0.1.0.apk)：日常安装（模拟烧录 + USB 发现；本机 Debug 密钥签名，可覆盖升级）。
-- [`Corn-Flashing-0.1.0-debug.apk`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.0/Corn-Flashing-0.1.0-debug.apk)：与上一包相同，文件名带 debug。
+- [`Corn-Flashing-0.1.1.apk`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.1/Corn-Flashing-0.1.1.apk)：日常安装（模拟烧录 + USB 发现；本机 Debug 密钥签名，可覆盖升级）。
+- [`Corn-Flashing-0.1.1-debug.apk`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.1/Corn-Flashing-0.1.1-debug.apk)：与上一包相同，文件名带 debug。
 
 ## 已实现
 
