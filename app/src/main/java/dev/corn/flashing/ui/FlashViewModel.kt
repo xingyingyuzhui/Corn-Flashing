@@ -13,8 +13,6 @@ import dev.corn.flashing.CornApplication
 import dev.corn.flashing.core.BatchConfig
 import dev.corn.flashing.service.FlashService
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -90,6 +88,7 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startSingle() {
+        stopWatchingNextBoard()
         if (session.value.probing || !batchGuard()) return
         viewModelScope.launch {
             val id = repository.prepareJob(singleRequest()) ?: return@launch
@@ -108,7 +107,7 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
                 _notice.value = "已识别 ${target.family} · ${target.flashSizeBytes / 1024} KB"
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
-                _notice.value = "识别失败，完整信息见设备页 USB 诊断"
+                _notice.value = "识别失败：${error.message ?: error.javaClass.simpleName}"
             }
         }
     }
@@ -182,31 +181,29 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     }
 
 
-    private var nextBoardJob: Job? = null
+    private val nextBoardWatcher = NextBoardWatcher(viewModelScope)
 
-    /** After a real success, poll probe until UID changes then start the next single run. */
-    fun watchNextBoard(previousUid: String?) {
-        nextBoardJob?.cancel()
-        nextBoardJob = viewModelScope.launch {
-            repeat(90) { // ~3 minutes at 2s
-                delay(2000)
-                if (session.value.running) return@launch
-                if (batches.active.value != null) return@launch
-                try {
-                    val target = repository.probeChip()
-                    val uid = target.uid
-                    if (uid != null && uid != previousUid) {
-                        _notice.value = "检测到新板 $uid，开始烧录"
-                        startSingle()
-                        return@launch
-                    }
-                } catch (_: Exception) {
-                    // keep waiting
-                }
-            }
-            _notice.value = "等待新板超时：请手动点「立即再烧一块」"
-        }
+    /** Called only while the successful result page is visible and the app is resumed. */
+    fun watchNextBoard(jobId: String, previousUid: String?) {
+        nextBoardWatcher.start(
+            jobId = jobId,
+            previousUid = previousUid,
+            canContinue = {
+                val current = session.value
+                prefs.autoNextBoard && !prefs.simulator && !current.running &&
+                    current.job?.id == jobId && current.job?.status == "SUCCEEDED" &&
+                    batches.active.value == null
+            },
+            probeUid = { repository.probeChip().uid },
+            onNewBoard = { uid ->
+                _notice.value = "检测到新板 $uid，开始烧录"
+                startSingle()
+            },
+            onTimeout = { _notice.value = "等待新板超时：请手动点「立即再烧一块」" },
+        )
     }
+
+    fun stopWatchingNextBoard() = nextBoardWatcher.stop()
 
     /** Firmware and single runs are locked while a batch is open, so a batch never mixes inputs. */
     private fun batchGuard(): Boolean {

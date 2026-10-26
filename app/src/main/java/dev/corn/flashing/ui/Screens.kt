@@ -47,12 +47,6 @@ fun FirmwareTab(vm: FlashViewModel, state: SessionState, binAddress: String, onA
     TopBar("固件库", "本机 · ${if (fw == null) 0 else 1} 个版本") { IconBtn(Lucide.Download, onPick) }
     Box(Modifier.fillMaxSize()) {
         ScrollBody(spacing = 12) {
-            state.importError?.let { error ->
-                val (title, advice) = importErrorAdvice(error)
-                Banner(title, "$error\n$advice", action = {
-                    T("知道了", CornColors.Corn, 12.sp, FontWeight.SemiBold, modifier = Modifier.clickable { vm.clearImportError() })
-                })
-            }
             if (fw == null) EmptyLibrary(vm, state, onPick)
             else {
                 var query by rememberSaveable { mutableStateOf("") }

@@ -3,6 +3,7 @@ package dev.corn.flashing.ui
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,6 +27,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.corn.flashing.core.FlashStage
 import dev.corn.flashing.core.FirmwarePreflight
@@ -67,7 +72,6 @@ fun CornApp(vm: FlashViewModel) {
     var page by rememberSaveable { mutableStateOf(Page.NONE) }
     var batchMode by rememberSaveable { mutableStateOf(false) }
     var binAddress by rememberSaveable { mutableStateOf("08000000") }
-    val snackbar = remember { SnackbarHostState() }
     val log = remember { RunLog() }
     val prefs = vm.prefs
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -76,7 +80,6 @@ fun CornApp(vm: FlashViewModel) {
     val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) vm.export(uri)
     }
-    LaunchedEffect(notice) { notice?.let { snackbar.showSnackbar(it); vm.clearNotice() } }
     LaunchedEffect(batch != null) { if (batch != null) batchMode = true }
     // Keep a readable log of the current job (screen 02 實時日志).
     LaunchedEffect(state.job?.id, state.flashStage, state.message, state.running) {
@@ -96,6 +99,29 @@ fun CornApp(vm: FlashViewModel) {
     val view = LocalView.current
     DisposableEffect(prefs.keepScreenOn) { view.keepScreenOn = prefs.keepScreenOn; onDispose { } }
     FinishFeedback(vm, state)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val lifecycleState by lifecycleOwner.lifecycle.currentStateAsState()
+    val resultPageEligible = page == Page.FLOW && report == null && batch == null &&
+        !state.running && state.job?.status == "SUCCEEDED" && state.job?.finishedAt != null &&
+        prefs.autoNextBoard && !prefs.simulator
+    val resultVisible = resultPageEligible && lifecycleState == Lifecycle.State.RESUMED
+    val activeResult by rememberUpdatedState(if (resultPageEligible) state.job else null)
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> vm.stopWatchingNextBoard()
+                Lifecycle.Event.ON_RESUME -> activeResult?.let { vm.watchNextBoard(it.id, it.targetUid) }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); vm.stopWatchingNextBoard() }
+    }
+    DisposableEffect(resultVisible, state.job?.id) {
+        if (resultVisible) state.job?.let { vm.watchNextBoard(it.id, it.targetUid) }
+        onDispose { vm.stopWatchingNextBoard() }
+    }
+    val leaveFlow: () -> Unit = { vm.stopWatchingNextBoard(); page = Page.NONE }
 
     val pendingStart = remember { mutableStateOf<(() -> Unit)?>(null) }
     val notifPermission = rememberLauncherForActivityResult(
@@ -129,8 +155,8 @@ fun CornApp(vm: FlashViewModel) {
                     BatchReportScreen(vm, reportId, onBack = { vm.openReport(null) })
                 }
                 page == Page.FLOW && batch == null -> {
-                    BackHandler(enabled = !state.running) { page = Page.NONE }
-                    FlowScreen(vm, state, log, history, onBack = { if (!state.running) page = Page.NONE })
+                    BackHandler(enabled = !state.running) { leaveFlow() }
+                    FlowScreen(vm, state, log, history, onBack = { if (!state.running) leaveFlow() })
                 }
                 page == Page.SETTINGS -> {
                     BackHandler { page = Page.NONE }
@@ -151,7 +177,7 @@ fun CornApp(vm: FlashViewModel) {
                     containerColor = CornColors.Background,
                     bottomBar = { BottomNav(tab) { tab = it } },
                 ) { padding ->
-                    Column(Modifier.fillMaxSize().padding(padding).statusBarsPadding()) {
+                    Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                         when (tab) {
                             0 -> Workbench(vm, state, history, devices, batchMode, sim,
                                 onMode = { wanted ->
@@ -169,7 +195,12 @@ fun CornApp(vm: FlashViewModel) {
                     }
                 }
             }
-            SnackbarHost(snackbar, modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
+            if (notice != null) {
+                MessageDialog("消息提醒", notice!!, onDismiss = vm::clearNotice)
+            } else state.importError?.let { error ->
+                val (title, advice) = importErrorAdvice(error)
+                MessageDialog(title, "$error\n\n$advice", onDismiss = vm::clearImportError)
+            }
             offer?.let { ResumeSheet(it, vm) }
         }
     }
@@ -196,9 +227,6 @@ private fun FinishFeedback(vm: FlashViewModel, state: SessionState) {
             val vibrator = context.getSystemService(android.os.Vibrator::class.java)
             vibrator?.vibrate(android.os.VibrationEffect.createOneShot(300, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
         }
-        if (job.status == "SUCCEEDED" && vm.prefs.autoNextBoard && !vm.prefs.simulator) {
-            vm.watchNextBoard(job.targetUid)
-        }
     }
 }
 
@@ -207,18 +235,27 @@ private fun FinishFeedback(vm: FlashViewModel, state: SessionState) {
 @Composable
 private fun BottomNav(tab: Int, onTab: (Int) -> Unit) {
     val items = listOf(Lucide.Bolt to "工作台", Lucide.File to "固件", Lucide.Sliders to "配置", Lucide.Usb to "设备", Lucide.List to "记录")
-    Column(Modifier.fillMaxWidth().background(CornColors.NavBackground).navigationBarsPadding()) {
-        DividerLine()
-        Row(Modifier.fillMaxWidth().height(76.dp).padding(top = 8.dp, bottom = 14.dp)) {
-            items.forEachIndexed { index, (icon, label) ->
-                val active = index == tab
-                Column(Modifier.weight(1f).fillMaxHeight().clickable { onTab(index) },
-                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)) {
-                    Box(Modifier.size(52.dp, 28.dp).clip(RoundedCornerShape(99.dp))
-                        .background(if (active) CornColors.CornContainer else Color.Transparent), contentAlignment = Alignment.Center) {
-                        Ico(icon, if (active) CornColors.Corn else CornColors.Mute, 20.dp)
+    Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp),
+        contentAlignment = Alignment.Center) {
+        Surface(
+            modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth(),
+            shape = RoundedCornerShape(28.dp),
+            color = CornColors.Surface2,
+            border = BorderStroke(1.dp, CornColors.Line),
+            shadowElevation = 12.dp,
+        ) {
+            Row(Modifier.fillMaxWidth().height(68.dp).padding(horizontal = 6.dp, vertical = 6.dp)) {
+                items.forEachIndexed { index, (icon, label) ->
+                    val active = index == tab
+                    Column(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(22.dp))
+                        .background(if (active) CornColors.CornContainer else Color.Transparent)
+                        .clickable { onTab(index) },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically)) {
+                        Ico(icon, if (active) CornColors.Corn else CornColors.Dim, 21.dp)
+                        T(label, if (active) CornColors.Corn else CornColors.Dim, 11.sp,
+                            if (active) FontWeight.SemiBold else FontWeight.Medium)
                     }
-                    T(label, if (active) CornColors.Text else CornColors.Mute, 11.sp, if (active) FontWeight.SemiBold else FontWeight.Medium)
                 }
             }
         }

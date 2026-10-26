@@ -344,9 +344,6 @@ fun BatchReportScreen(vm: FlashViewModel, batchId: String, onBack: () -> Unit) {
         if (uri != null) vm.exportCsv(batchId, uri)
     }
     val context = LocalContext.current
-    val notice by vm.notice.collectAsStateWithLifecycle()
-    val snackbar = remember { SnackbarHostState() }
-    LaunchedEffect(notice) { notice?.let { snackbar.showSnackbar(it); vm.clearNotice() } }
     Box(Modifier.fillMaxSize().background(CornColors.Background)) {
         Column(Modifier.fillMaxSize().systemBarsPadding()) {
             BackTop("批次报告", "每块板一条，可追溯", onBack = onBack) { IconBtn(Lucide.List, { exporter.launch("${batch?.workOrder ?: "batch"}-report.csv") }) }
@@ -417,6 +414,5 @@ fun BatchReportScreen(vm: FlashViewModel, batchId: String, onBack: () -> Unit) {
                 }, Modifier.weight(1f), primary = true)
             }
         }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
     }
 }
