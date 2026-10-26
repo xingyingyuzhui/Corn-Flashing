@@ -1,6 +1,6 @@
-# 0.1.8-test1 — 外部 FLM 实验闸门与校验说明修正
+# 0.1.8 — 外部 FLM 实验闸门与校验说明修正
 
-versionCode 22，保留与 0.1.6/0.1.7 相同的本机 debug 签名。当前为本地测试构建，尚未作为 GitHub 正式版发布。
+开发验证使用 0.1.8-test1 / versionCode 22；正式构建为 0.1.8 / versionCode 23，功能一致，保留与 0.1.6/0.1.7 相同的本机 debug 签名。
 
 ## 本次变更
 
@@ -22,4 +22,6 @@ versionCode 22，保留与 0.1.6/0.1.7 相同的本机 debug 签名。当前为�
 
 本次未验证外部 FLM 的真实芯片兼容性，未增加已验证算法白名单或具体料号实板记录。内置 F1 的既有实板记录仍限原验证组合。
 
-APK：`dist/Corn-Flashing-0.1.8-test1.apk`，旁附 SHA-256。界面截图仅保存本机 `.local-validation/test018/`。
+正式构建再次通过 core/app 单元测试、assembleDebug 和 lintDebug，APK 签名与已发布 0.1.6 相同；版本号增加至 23，可以覆盖测试包升级。
+
+APK：`dist/Corn-Flashing-0.1.8.apk`，旁附 SHA-256。界面截图仅保存本机 `.local-validation/test018/`。
