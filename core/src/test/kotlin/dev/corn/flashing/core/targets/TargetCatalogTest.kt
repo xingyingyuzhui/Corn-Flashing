@@ -53,7 +53,7 @@ class TargetCatalogTest {
         val failure = assertThrows(IllegalArgumentException::class.java) {
             FlashPlanner.plan(image(0x08020000), policy, target, TargetRegistry(listOf(descriptor)))
         }
-        assertTrue(failure.message!!.contains("包含保留数据"))
+        assertTrue(failure.message!!.contains("边界对齐"))
     }
 
     @Test fun geometryRejectsTruncatedSectorsGapsAndOverlaps() {

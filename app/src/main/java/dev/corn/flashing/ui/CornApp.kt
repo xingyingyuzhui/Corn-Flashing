@@ -66,6 +66,7 @@ fun CornApp(vm: FlashViewModel) {
     val state by vm.session.collectAsStateWithLifecycle()
     val history by vm.history.collectAsStateWithLifecycle(initialValue = emptyList())
     val devices by vm.devices.collectAsStateWithLifecycle()
+    val reservedSettings by vm.reservedSettings.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val batch by vm.batch.collectAsStateWithLifecycle()
     val offer by vm.resumeOffer.collectAsStateWithLifecycle()
@@ -287,6 +288,7 @@ private fun Workbench(
     batchMode: Boolean, sim: Boolean, onMode: (Boolean) -> Unit, onSettings: () -> Unit, onGoFirmware: () -> Unit,
     onStart: () -> Unit, onNewBatch: () -> Unit,
 ) {
+    val reservedSettings by vm.reservedSettings.collectAsStateWithLifecycle()
     val bindings by vm.algorithmBindings.collectAsStateWithLifecycle()
     val targetRegistry = remember(bindings) { vm.targetRegistry }
     val batch by vm.batch.collectAsStateWithLifecycle()
@@ -371,10 +373,12 @@ private fun Workbench(
         FirmwareCard(state.firmware, effectiveProfile(state, vm), onGoFirmware, vm)
         val firmware = state.firmware
         val preflight = firmware?.let { FirmwarePreflight.inspect(it.image, effectiveProfile(state, vm), effectiveTarget(state, vm), if (sim) TargetCatalog.registry else vm.targetRegistry) }
+        val reservedError = reservedSettings.error
         val pages = firmware?.takeIf { preflight?.targetKnown == true && preflight.canStart }?.let { erasePages(it, effectiveProfile(state, vm)) }
         CornButton("开始烧录", onStart, Modifier.fillMaxWidth(), primary = true, height = 64, radius = 20, icon = Lucide.Bolt,
-            enabled = state.ready && !state.importing && firmware != null && !state.running && !state.probing && preflight?.canStart == true,
+            enabled = reservedError == null && state.ready && !state.importing && firmware != null && !state.running && !state.probing && preflight?.canStart == true,
             subtitle = when {
+                reservedError != null -> "请先修复参数保留区配置"
                 state.probing -> "识别中，请等待 USB 通信完成"
                 firmware == null -> "先选择固件"
                 preflight?.error != null -> "当前目标或固件未通过烧录预检"
@@ -428,7 +432,7 @@ fun effectiveTarget(state: SessionState, vm: FlashViewModel): TargetInfo? =
 
 fun effectiveProfile(state: SessionState, vm: FlashViewModel): ProductProfile {
     val target = effectiveTarget(state, vm) ?: return ProductProfiles.AUTO_DETECT
-    return runCatching { vm.targetRegistry.find(target.deviceId)!!.profileFor(target, ProductProfiles.AUTO_DETECT) }
+    return runCatching { vm.profileFor(target) }
         .getOrDefault(ProductProfiles.AUTO_DETECT)
 }
 

@@ -19,9 +19,7 @@ object FlashPlanner {
         val effective = descriptor.profileFor(target, profile)
         val flash = AddressRange(effective.flashStart, effective.flashStart + effective.flashSizeBytes)
         val sectors = descriptor.geometry.sectors(effective.flashStart, effective.flashSizeBytes)
-        effective.reservedRanges.forEach { reserved ->
-            require(reserved.start >= flash.start && reserved.endExclusive <= flash.endExclusive) { "保留区超出 Flash 范围" }
-        }
+        ReservedRegionPolicy.validateRanges(effective.reservedRanges, target, descriptor)
         require(image.segments.isNotEmpty()) { "固件没有可烧录数据" }
         val touched = sortedSetOf<Long>()
         var previousEnd = flash.start

@@ -14,8 +14,8 @@ android {
         applicationId = "dev.corn.flashing"
         minSdk = 29
         targetSdk { version = release(37) }
-        versionCode = 18
-        versionName = "0.1.6-test11"
+        versionCode = 19
+        versionName = "0.1.6-test12"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

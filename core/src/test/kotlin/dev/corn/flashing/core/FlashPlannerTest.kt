@@ -20,9 +20,11 @@ class FlashPlannerTest {
 
     @Test fun refusesEraseOfReservedBytesInSamePageEvenWithoutDirectWriteOverlap() {
         val guarded = profile.copy(reservedRanges = listOf(AddressRange(0x08000300, 0x08000400)))
-        failsContaining("包含保留数据") { FlashPlanner.plan(bin(0, 16), guarded, target) }
-        failsContaining("覆盖产品保留区") { FlashPlanner.plan(bin(0x300, 1), guarded, target) }
-        assertEquals(listOf(0x08000400L), FlashPlanner.plan(bin(0x400, 1), guarded, target).erasePageAddresses)
+        failsContaining("边界对齐") { FlashPlanner.plan(bin(0, 16), guarded, target) }
+        failsContaining("边界对齐") { FlashPlanner.plan(bin(0x300, 1), guarded, target) }
+        val aligned = profile.copy(reservedRanges = listOf(AddressRange(0x08000000, 0x08000400)))
+        failsContaining("覆盖产品保留区") { FlashPlanner.plan(bin(0x300, 1), aligned, target) }
+        assertEquals(listOf(0x08000400L), FlashPlanner.plan(bin(0x400, 1), aligned, target).erasePageAddresses)
     }
 
     @Test fun rejectsUnknownDeviceBogusCapacityAndLockedTemplate() {

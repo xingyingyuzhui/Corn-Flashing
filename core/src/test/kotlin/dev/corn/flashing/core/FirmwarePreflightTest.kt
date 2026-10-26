@@ -34,7 +34,7 @@ class FirmwarePreflightTest {
         val reserved = ProductProfiles.F103_OPEN.copy(reservedRanges = listOf(AddressRange(0x08000020, 0x08000040)))
         val check = FirmwarePreflight.inspect(shortImage, reserved, target(128))
         assertFalse(check.canStart)
-        assertTrue(check.error!!.contains("包含保留数据"))
+        assertTrue(check.error!!.contains("边界对齐"))
     }
     @Test fun configurationFailuresDoNotMasqueradeAsUsbFailures() {
         assertTrue(isFirmwareConfigurationError("固件地址超出允许范围：0x08010000"))

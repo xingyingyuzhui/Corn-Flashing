@@ -27,6 +27,9 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     val usbMessage = app.usb.message
     val usbDenied = app.usb.lastDenied
     val hostSupported = app.usb.hostSupported
+    val reservedSettings = app.reservedRegions.state
+    val reservedPolicy get() = app.reservedRegions.policy(session.value.target)
+    fun profileFor(target: dev.corn.flashing.core.TargetInfo) = repository.profileFor(target)
     val algorithmLibrary get() = app.algorithms
     val installedAlgorithms = app.algorithms.installed
     val algorithmBindings = app.algorithms.bindings
@@ -92,6 +95,7 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startSingle() {
+        if (reservedSettings.value.error != null) { notify(reservedSettings.value.error!!); return }
         stopWatchingNextBoard()
         if (session.value.probing || !batchGuard()) return
         viewModelScope.launch {
@@ -189,6 +193,27 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
         if (!algorithmChangeAllowed()) return
         try { app.algorithms.remove(hash) }
         catch (error: Exception) { notify("移除算法失败：${error.message}") }
+    }
+
+    private fun reservedChangeAllowed(): Boolean {
+        if (session.value.running || session.value.probing || batch.value != null || algorithmBusy.value) {
+            notify("请先结束烧录、识别或批次，再修改保留区")
+            return false
+        }
+        stopWatchingNextBoard()
+        return true
+    }
+    fun setReservedPolicy(enabled: Boolean, ranges: List<dev.corn.flashing.core.AddressRange>) {
+        if (!reservedChangeAllowed()) return
+        try {
+            val target = requireNotNull(session.value.target) { "请先识别目标芯片" }
+            val descriptor = requireNotNull(targetRegistry.find(target.deviceId)) { "目标芯片未登记" }
+            app.reservedRegions.update(target, descriptor, dev.corn.flashing.core.ReservedRegionPolicy(enabled, ranges))
+        } catch (error: Exception) { notify("保留区设置失败：${error.message}") }
+    }
+    fun resetReservedSettings() {
+        if (!reservedChangeAllowed()) return
+        try { app.reservedRegions.reset() } catch (error: Exception) { notify("重置保留区失败：${error.message}") }
     }
 
     private var singleCounter = 0L

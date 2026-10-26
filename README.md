@@ -1,6 +1,6 @@
 # Corn Flashing
 
-本地修复测试版：**0.1.6-test7**（尚未发布到 GitHub Release）。USB 修复与诊断步骤见 [测试版说明](docs/test-build-0.1.6-test7.md)。
+本地修复测试版：**0.1.6-test12**（尚未发布到 GitHub Release）。参数保留区说明见 [测试版说明](docs/test-build-0.1.6-test12.md)。
 
 Android 离线单片机烧录工具的基础框架。目标为 ST-LINK/V2 + STM32F103，后续扩展其他探针和多路批量。
 
@@ -32,13 +32,14 @@ Android 离线单片机烧录工具的基础框架。目标为 ST-LINK/V2 + STM3
 - 设备页「识别芯片」走真实探测（与工作台相同），卡片展示自动匹配的芯片系列 / 容量 / UID。
 - ST-LINK USB：打开设备后先 setConfiguration 再 claimInterface；按 PID 选择 bulk 端点；写失败重试 / UsbRequest 回退；失败页不再误显示「3.30 V · 模拟」。
 - 真实 STM32F1 擦写：规划页擦除、半字编程、回读校验、可选复位；批次可关模拟走单工位真机。
+- 参数保留区（默认关闭）：按页声明不擦写的地址范围，整片擦除也会跳过；按设备组＋容量分别保存；固件覆盖保留区时拒绝烧录；批次换板核对配置指纹。只保护烧录过程，不管理外置 EEPROM。
 - 模拟完成单独标记，不能被当作真实校验通过或真实板卡成功数量。
 
 ## 尚未实现
 
 - NDK + libusb + stlink 原生路线（架构长期方案；当前为 Kotlin USB 探测）。
 - ELF/AXF 加载区段解析：目前识别到该格式会明确拒绝，不会伪装导入成功。
-- 可手动编辑的产品/Bootloader/参数区配置；当前由探测自动匹配容量与设备组，保留区等仍为默认预设。
+- 可手动编辑的产品/Bootloader/参数区配置；当前由探测自动匹配容量与设备组，产品配置页仅开放参数保留区。
 - 多探针并行、自动换板识别、芯片真伪判断或完整料号推断。
 - 自动解除读保护、Option Bytes、外部 Flash。
 
@@ -120,3 +121,5 @@ GRADLE_USER_HOME="$HOME/.gradle" ./gradlew :core:test :app:assembleDebug :app:li
 通用探针接口、芯片描述库和算法注册已接入；当前真实烧录算法为单Bank STM32F1，F0/F4指定设备组仅识别。具体支持范围与实测组合见[兼容引擎架构](docs/architecture/compatibility-engine.md)，最新验证见[test10记录](docs/test-build-0.1.6-test10.md)。CMSIS-Pack/FLM解析、显式绑定与执行基础已接入，见[第二阶段说明](docs/architecture/cmsis-pack-flm.md)；外部算法仍需对应实板验证。
 
 最新算法包阶段验证：[test11记录](docs/test-build-0.1.6-test11.md)。产品配置中可导入.pack/.flm；仅显式绑定且布局匹配后参与任务，外部FLM尚无实板验证记录。
+
+最新参数保留区验证：[test12记录](docs/test-build-0.1.6-test12.md)。默认关闭；开启后按页跳过，固件冲突拒绝，真机 35 页擦写/回读/复位通过，178 项测试。

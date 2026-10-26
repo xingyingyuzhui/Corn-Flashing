@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 class CornApplication : Application() {
+    lateinit var reservedRegions: dev.corn.flashing.storage.ReservedRegionStore
+        private set
     lateinit var algorithms: dev.corn.flashing.pack.AlgorithmLibrary
         private set
     lateinit var repository: FlashRepository
@@ -39,8 +41,11 @@ class CornApplication : Application() {
         val database = Room.databaseBuilder(this, FlashDatabase::class.java, "corn-flashing.db").build()
         usb = UsbProbeMonitor(this)
         val usbManager = getSystemService(UsbManager::class.java)
+        reservedRegions = dev.corn.flashing.storage.ReservedRegionStore(this)
         algorithms = dev.corn.flashing.pack.AlgorithmLibrary(this)
-        repository = FlashRepository(this, database.dao(), targetRegistry = { algorithms.snapshot().targets }) {
+        repository = FlashRepository(this, database.dao(), targetRegistry = { algorithms.snapshot().targets },
+            reservedPolicies = { reservedRegions.snapshot() },
+            reservedPreview = { reservedRegions.state.value.policies }) {
             val device = StLinkHardwareBackend.findAuthorized(usbManager, usb.devices.value) ?: return@FlashRepository null
             val snapshot = algorithms.snapshot()
             StLinkHardwareBackend(usbManager, device, snapshot.targets, snapshot.algorithms)

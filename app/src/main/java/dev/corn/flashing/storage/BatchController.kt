@@ -84,6 +84,7 @@ class BatchController(
         val session = repository.state.value
         val firmware = session.firmware ?: return "请先选择固件"
         if (session.running || session.importing) return "当前有任务在执行"
+        runCatching { repository.validateReservedSettings() }.onFailure { return it.message ?: "保留区配置无效" }
         this.useSimulator = useSimulator
         this.lastRealUid = null
         val planTarget = if (useSimulator) DemoFlashBackend.DEFAULT_TARGET
@@ -222,6 +223,11 @@ class BatchController(
                     val live = waitForRealBoard(view.tally.succeededUids)
                     SimulatedBoards.Board(live, null)
                 }
+                val profileMatches = runCatching {
+                    repository.profileFor(board.target, registry = if (useSimulator) dev.corn.flashing.core.targets.TargetCatalog.registry else repository.targets)
+                        .configSha256 == view.batch.configSha256
+                }.getOrDefault(false)
+                if (!profileMatches) { pauseNow("新板芯片、算法或保留区与批次冻结配置不一致，未执行擦除"); break }
                 when (val decision = BatchRules.decide(config, view.tally, board.target.uid)) {
                     is BoardDecision.SkipDuplicate -> {
                         withContext(Dispatchers.IO) {
@@ -239,6 +245,7 @@ class BatchController(
                             batchId = view.batch.id,
                             seq = decision.seq,
                             serialOnSuccess = BatchRules.nextSerial(config, view.tally),
+                            expectedProfileSha256 = view.batch.configSha256,
                             useSimulator = useSimulator,
                             executeOptions = FlashExecuteOptions(
                                 // Batch uses repository profile defaults; reset on for real line.

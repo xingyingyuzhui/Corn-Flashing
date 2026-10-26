@@ -258,6 +258,7 @@ fun FlashGrid(fw: ImportedFirmware, profile: ProductProfile) {
 
 @Composable
 fun ConfigTab(vm: FlashViewModel) {
+    val reserved by vm.reservedSettings.collectAsStateWithLifecycle()
     val bindings by vm.algorithmBindings.collectAsStateWithLifecycle()
     val registry = remember(bindings) { vm.targetRegistry }
     val state by vm.session.collectAsStateWithLifecycle()
@@ -317,24 +318,7 @@ fun ConfigTab(vm: FlashViewModel) {
             T("这条验证记录不代表整个系列均已实测；“仅识别”目标不会执行擦除或写入。", CornColors.Mute, 11.5.sp)
         }
         AlgorithmLibraryCard(vm)
-        CornCard(spacing = 8.dp) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Label("保留区", Modifier.weight(1f))
-                Chip("＋ 添加 · 未开放")
-            }
-            if (p.reservedRanges.isEmpty()) {
-                Box(Modifier.fillMaxWidth().height(18.dp).clip(RoundedCornerShape(6.dp)).background(CornColors.Surface3))
-                T(if (probed == null) "尚未识别目标：先探测 Flash 容量与布局，再检查可写范围。"
-                    else "当前没有保留区：Flash 范围 ${p.flashStart.hexAddress()} – ${(p.flashStart + p.flashSizeBytes - 1).hexAddress()}；实际擦写仍需通过兼容性预检。", CornColors.Dim, 12.sp)
-                T("示例：Bootloader 0x08000000–0x08001FFF 不擦写；参数区 0x0800F800 起保留", CornColors.Mute, 11.sp)
-            } else p.reservedRanges.forEach { r ->
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Box(Modifier.size(28.dp, 18.dp).clip(RoundedCornerShape(5.dp)).hatch())
-                    T("${r.start.hexAddress()} – ${(r.endExclusive - 1).hexAddress()}", size = 12.sp, mono = true, modifier = Modifier.weight(1f))
-                    Chip("不擦写", ChipTone.BAD, icon = Lucide.Lock)
-                }
-            }
-        }
+        ReservedRegionCard(vm)
         CornCard(spacing = 10.dp) {
             Row { Label("擦除", Modifier.weight(1f)); T("按下方偏好执行", CornColors.Mute, 11.sp) }
             Seg(listOf("只擦用到的页", "整片擦除"), prefs.eraseMode, { prefs.eraseMode = it })

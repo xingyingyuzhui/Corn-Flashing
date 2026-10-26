@@ -31,6 +31,8 @@ data class JobRequest(
     /** When false, [FlashRepository] opens the real ST-LINK backend instead of the demo board. */
     val useSimulator: Boolean = true,
     val executeOptions: FlashExecuteOptions = FlashExecuteOptions(),
+    val reservedPolicies: Map<String, ReservedRegionPolicy> = emptyMap(),
+    val expectedProfileSha256: String? = null,
 )
 
 data class SessionState(
@@ -67,6 +69,8 @@ class FlashRepository(
     private val context: Context,
     private val dao: FlashDao,
     private val targetRegistry: () -> dev.corn.flashing.core.targets.TargetRegistry = { TargetCatalog.registry },
+    private val reservedPolicies: () -> Map<String, ReservedRegionPolicy> = { emptyMap() },
+    private val reservedPreview: () -> Map<String, ReservedRegionPolicy> = reservedPolicies,
     private val realBackend: RealBackendProvider = RealBackendProvider { null },
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -74,14 +78,16 @@ class FlashRepository(
     val state = _state.asStateFlow()
     val history = dao.recentJobs()
     private val probePrefs = context.getSharedPreferences("probe", Context.MODE_PRIVATE)
-    /** Open F1 template, or the last probed chip alignment when available. */
     val targets get() = targetRegistry()
+    fun profileFor(target: TargetInfo, policies: Map<String, ReservedRegionPolicy> = reservedPreview(),
+                   registry: dev.corn.flashing.core.targets.TargetRegistry = targets): ProductProfile {
+        val descriptor = requireNotNull(registry.find(target.deviceId)) { "目标芯片未登记" }
+        val base = descriptor.profileFor(target, ProductProfiles.AUTO_DETECT)
+        return (policies[ReservedRegionStore.key(target)] ?: ReservedRegionPolicy()).apply(base, target, descriptor)
+    }
     val profile: ProductProfile
-        get() {
-            val target = _state.value.target
-            return if (target != null) runCatching { targets.find(target.deviceId)!!.profileFor(target, ProductProfiles.AUTO_DETECT) }
-                .getOrDefault(ProductProfiles.AUTO_DETECT) else ProductProfiles.AUTO_DETECT
-        }
+        get() = _state.value.target?.let { profileFor(it) } ?: ProductProfiles.AUTO_DETECT
+    fun validateReservedSettings() { reservedPolicies() }
     private var pending: Pair<JobEntity, Pair<ImportedFirmware, JobRequest>>? = null
     private val _finished = MutableSharedFlow<JobEntity>(extraBufferCapacity = 16)
     /** Every job's final row, once saved. */
@@ -190,11 +196,16 @@ class FlashRepository(
         val current = _state.value
         if (!current.ready || current.running || current.importing) return null
         val firmware = current.firmware ?: return null
+        val frozenPolicies = reservedPolicies()
+        val expectedTarget = if (request.useSimulator) request.board.target else current.target
+        val expectedHash = request.expectedProfileSha256 ?: expectedTarget?.let {
+            profileFor(it, frozenPolicies, if (request.useSimulator) TargetCatalog.registry else targets).configSha256
+        }
         val record = JobEntity(UUID.randomUUID().toString(), firmware.name,
             firmware.image.sourceSha256, profile.name, startedAt = System.currentTimeMillis(),
             targetUid = if (request.useSimulator) request.board.target.uid else null,
             mode = if (request.useSimulator) "DEMO" else "STLINK", batchId = request.batchId, seq = request.seq)
-        pending = record to (firmware to request)
+        pending = record to (firmware to request.copy(reservedPolicies = frozenPolicies, expectedProfileSha256 = expectedHash))
         val sim = request.useSimulator
         _state.update { it.copy(running = true, progress = 0f, flashStage = null, failedStage = null, stage = "正在排队",
             message = if (sim) "正在保存任务，不操作 USB 设备" else "正在保存任务，稍后连接 ST-LINK",
@@ -259,7 +270,12 @@ class FlashRepository(
             val mv = backend.targetVoltageMv
             if (!backend.isSimulation) saveProbedTarget(target)
             _state.update { it.copy(target = target, voltageMv = mv, probeInfo = backend.probeInfo) }
-            val plan = FlashPlanner.plan(firmware.image, ProductProfiles.AUTO_DETECT, target, if (backend.isSimulation) TargetCatalog.registry else targets)
+            val registry = if (backend.isSimulation) TargetCatalog.registry else targets
+            val frozenProfile = profileFor(target, request.reservedPolicies, registry)
+            require(request.expectedProfileSha256 == null || frozenProfile.configSha256 == request.expectedProfileSha256) {
+                "实际芯片、算法或保留区与任务冻结配置不一致；未执行擦除"
+            }
+            val plan = FlashPlanner.plan(firmware.image, frozenProfile, target, registry)
             record = record.copy(targetUid = target.uid, mode = if (backend.isSimulation) "DEMO" else "STLINK")
             _state.update { it.copy(target = target, plan = plan, voltageMv = mv, probeInfo = backend.probeInfo) }
             backend.execute(plan, request.executeOptions) { event ->
