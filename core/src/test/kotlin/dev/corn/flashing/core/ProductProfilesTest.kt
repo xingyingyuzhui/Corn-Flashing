@@ -26,6 +26,12 @@ class ProductProfilesTest {
             assertEquals(bytes, aligned.flashSizeBytes)
             assertEquals(page, aligned.pageSize)
             assertTrue(aligned.name.contains("${bytes / 1024} KB"))
+            if (id == 0x430) {
+                assertThrows(IllegalArgumentException::class.java) {
+                    FlashPlanner.plan(FirmwareParser.parse("t.bin", byteArrayOf(1), 0x08000000L), ProductProfiles.F103_OPEN, target)
+                }
+                return@forEach
+            }
             val plan = FlashPlanner.plan(
                 FirmwareParser.parse("t.bin", byteArrayOf(1), 0x08000000L),
                 ProductProfiles.F103_OPEN,

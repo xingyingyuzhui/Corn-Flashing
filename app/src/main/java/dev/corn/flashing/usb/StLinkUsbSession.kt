@@ -7,12 +7,6 @@ import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import dev.corn.flashing.core.TargetInfo
-import dev.corn.flashing.core.FlashPlan
-import dev.corn.flashing.core.FlashExecuteOptions
-import dev.corn.flashing.core.stlink.F1FlashProgrammer
-import dev.corn.flashing.core.stlink.F1TargetMemory
-import dev.corn.flashing.core.stlink.F1RamLoader
-import dev.corn.flashing.core.stlink.F1LoaderTarget
 import dev.corn.flashing.core.stlink.StLinkProtocol
 import dev.corn.flashing.core.stlink.StLinkUsbLayout
 import dev.corn.flashing.core.stlink.StLinkVersion
@@ -21,10 +15,12 @@ import android.util.Log
 import android.os.Build
 import dev.corn.flashing.core.stlink.UsbKernelErrors
 import java.io.Closeable
+import dev.corn.flashing.core.engine.*
+import dev.corn.flashing.core.targets.TargetCatalog
 
 /**
- * Claims the ST-LINK bulk interface, identifies the chip, and programs STM32F1 Flash
- * (page erase + half-word program + readback). Never touches option bytes / RDP.
+ * ST-LINK transport and Cortex debug operations. Chip recognition uses the target catalog;
+ * Flash registers and algorithms live in independent target drivers.
  */
 class StLinkUsbSession private constructor(
     private val connection: UsbDeviceConnection,
@@ -33,7 +29,7 @@ class StLinkUsbSession private constructor(
     private val epIn: UsbEndpoint,
     private val layoutLabel: String,
     private val io: AndroidUsbBulkIo,
-) : Closeable {
+) : Closeable, DebugProbe {
     private val transfers = StLinkBulkTransfers(io, layoutLabel)
     var version: StLinkVersion? = null
         private set
@@ -74,34 +70,9 @@ class StLinkUsbSession private constructor(
         StLinkProtocol.requireStatusOk(idCodes, "读 Core ID")
         StLinkProtocol.parseIdCodes(idCodes)
 
-        val idcodeWord = readMem32(StLinkProtocol.ADDR_DBGMCU_IDCODE)
-        val (deviceId, revisionId) = StLinkProtocol.parseDbgmcuIdCode(idcodeWord)
-        require(deviceId != 0) { "DBGMCU_IDCODE 无效，请检查 SWD 接线与目标供电" }
-
-        val flashWord = readMem32(StLinkProtocol.ADDR_FLASH_SIZE)
-        val flashBytes = StLinkProtocol.flashSizeBytesFromRegister(flashWord)
-
-        val uidBytes = readMemBytes(StLinkProtocol.ADDR_UID, 12)
-        val uid = StLinkProtocol.formatUid(uidBytes)
-
-        return TargetInfo(
-            deviceId = deviceId,
-            revisionId = revisionId,
-            flashSizeBytes = flashBytes,
-            uid = uid,
-            family = StLinkProtocol.familyLabel(deviceId),
-        )
+        return TargetIdentifier().identify(this)
     }
 
-
-    fun ensureDebug() {
-        if (version == null) smokeGetVersion()
-        val mode = StLinkProtocol.parseMode(xfer(StLinkProtocol.getCurrentMode(), 2))
-        if (mode == StLinkProtocol.MODE_DFU) xferOut(StLinkProtocol.exitDfu())
-        else if (mode == StLinkProtocol.MODE_DEBUG) xferOut(StLinkProtocol.exitDebug())
-        StLinkProtocol.requireStatusOk(xfer(StLinkProtocol.enterSwd(), 2), "进入 SWD")
-        initializeApAndHalt()
-    }
 
     private fun initializeAp() {
         if (version?.needsApInit == true) {
@@ -109,143 +80,105 @@ class StLinkUsbSession private constructor(
         }
     }
 
-    private fun initializeApAndHalt() {
+    override val probeInfo: ProbeInfo
+        get() = StLinkProbeCapabilities.describe(requireNotNull(version) { "探针版本未知" }, layoutLabel.substringBefore(' '))
+
+    override fun readMemory(address: Long, length: Int): ByteArray {
+        require(address >= 0 && length > 0 && address + length <= 0x1_0000_0000L)
+        return readMemBytes(address, length)
+    }
+    override fun writeMemory32(address: Long, data: ByteArray) {
+        require(address >= 0 && data.isNotEmpty() && address % 4 == 0L && data.size % 4 == 0 &&
+            address + data.size <= 0x1_0000_0000L) { "32位写入范围/对齐无效" }
+        writeMemBytes(address, data)
+    }
+    override fun writeHalfWord(address: Long, value: Int) {
+        require(ProbeCapability.NATIVE_HALFWORD_WRITE in probeInfo.capabilities) { "探针不支持原生半字写入" }
+        require(value in 0..0xFFFF)
+        xferOut(StLinkProtocol.writeMem16(address, 2))
+        xferOutRaw(byteArrayOf(value.toByte(), (value ushr 8).toByte()))
+        requireMemoryStatus("半字写入 ${address.hex()}")
+    }
+    override fun readCoreRegister(index: Int): Long {
+        require(index in 0..16)
+        check(isHalted()) { "读核心寄存器 R$index 前目标未停核" }
+        writeMem32Word(0xE000EDF4L, index.toLong())
+        waitRegisterReady()
+        return readMem32(0xE000EDF8L)
+    }
+    override fun writeCoreRegister(index: Int, value: Long) {
+        require(index in 0..16)
+        check(isHalted()) { "写核心寄存器前目标未停核" }
+        writeMem32Word(0xE000EDF8L, value)
+        writeMem32Word(0xE000EDF4L, 0x10000L or index.toLong())
+        waitRegisterReady()
+    }
+    override fun resume(maskInterrupts: Boolean) {
+        check(isHalted()) { "启动核心前目标未停核" }
+        // Only change C_MASKINTS while S_HALT is set.
+        writeMem32Word(StLinkProtocol.ADDR_DHCSR, if (maskInterrupts) 0xA05F000BL else 0xA05F0003L)
+        writeMem32Word(StLinkProtocol.ADDR_DHCSR, if (maskInterrupts) 0xA05F0009L else 0xA05F0001L)
+    }
+    override fun prepareProgramming() {
+        // Old V2 probes need a fresh SWD attachment before taking control for programming.
+        val mode = StLinkProtocol.parseMode(xfer(StLinkProtocol.getCurrentMode(), 2))
+        if (mode == StLinkProtocol.MODE_DFU) xferOut(StLinkProtocol.exitDfu())
+        else if (mode == StLinkProtocol.MODE_DEBUG) xferOut(StLinkProtocol.exitDebug())
+        StLinkProtocol.requireStatusOk(xfer(StLinkProtocol.enterSwd(), 2), "进入编程 SWD")
         initializeAp()
-        StLinkProtocol.requireStatusOk(xfer(StLinkProtocol.haltCore(), 2), "停核")
-        val deadline = System.nanoTime() + 500_000_000L
-        while (readMem32(StLinkProtocol.ADDR_DHCSR) and (1L shl 17) == 0L) {
-            check(System.nanoTime() < deadline) { "目标停核超时，未执行擦除" }
+        StLinkProtocol.requireStatusOk(xfer(StLinkProtocol.haltCore(), 2), "编程前停核")
+        val haltDeadline = System.nanoTime() + 500_000_000L
+        while (!isHalted()) {
+            check(System.nanoTime() < haltDeadline) { "编程前停核超时；未执行擦除" }
             Thread.sleep(1)
         }
     }
 
-    fun programF1(
-        plan: FlashPlan,
-        pages: List<Long>,
-        options: FlashExecuteOptions,
-        checkCancelled: () -> Unit,
-        onProgress: (dev.corn.flashing.core.FlashStage, Float, String) -> Unit,
-    ) {
-        val probeVersion = requireNotNull(version) { "探针版本未知，未执行擦除" }
-        val useRamLoader = !probeVersion.supportsHalfWordWrite
-        if (useRamLoader) {
-            require(probeVersion.stlink == 2 && probeVersion.jtag >= 13) {
-                "旧版 RAM 编程路径需要 ST-LINK/V2 J13 或更高；未执行擦除"
-            }
-        } else probeVersion.requireF1ProgrammingSupport()
-        checkCancelled()
-        ensureDebug()
-        val memory = object : F1TargetMemory {
-            override fun readWord(address: Long) = readMem32(address)
-            override fun writeWord(address: Long, value: Long) = writeMem32Word(address, value)
-            override fun writeHalfWord(address: Long, value: Int) {
-                val data = byteArrayOf(value.toByte(), (value ushr 8).toByte())
-                xferOut(StLinkProtocol.writeMem16(address, 2))
-                xferOutRaw(data)
-                requireMemoryStatus("半字写入 ${address.hex()}")
-            }
-            override fun readBytes(address: Long, length: Int) = readMemBytes(address, length)
-            override fun resetAndRun() {
-                // Explicit AIRCR SYSRESETREQ works even when ST-LINK NRST is not wired.
-                // The probe's F2 32 reset command may only pulse external reset on old V2 firmware.
-                val demcr = readMem32(0xE000EDFCL)
-                var resetFailure: Throwable? = null
-                try {
-                    writeMem32Word(0xE000EDFCL, demcr and 1L.inv()) // Clear reset vector catch.
-                    writeMem32Word(0xE000ED30L, 0x1F) // Clear stale debug fault/ BKPT flags (W1C).
-                    readMem32(StLinkProtocol.ADDR_DHCSR) // Clear sticky S_RESET_ST before reset.
-                    writeMem32Word(0xE000ED0CL, 0x05FA0004L)
-                    val deadline = System.nanoTime() + 500_000_000L
-                    while (readMem32(StLinkProtocol.ADDR_DHCSR) and (1L shl 25) != 0L) {
-                        check(System.nanoTime() < deadline) { "软件复位未完成" }
-                        Thread.sleep(1)
-                    }
-                    StLinkProtocol.requireStatusOk(xfer(StLinkProtocol.unhaltCore(), 2), "解除停核")
-                    val runDeadline = System.nanoTime() + 500_000_000L
-                    while (readMem32(StLinkProtocol.ADDR_DHCSR) and (1L shl 17) != 0L) {
-                        check(System.nanoTime() < runDeadline) { "复位后目标仍停核" }
-                        Thread.sleep(1)
-                    }
-                    Log.i("CornUsb", "AIRCR SYSRESETREQ completed; target running")
-                } catch (error: Throwable) {
-                    resetFailure = error
-                    throw error
-                } finally {
-                    try { writeMem32Word(0xE000EDFCL, demcr) } catch (cleanup: Throwable) {
-                        if (resetFailure != null) resetFailure.addSuppressed(cleanup) else throw cleanup
-                    }
-                }
-            }
+    override fun halt() {
+        // Preserve the interrupt mask until the core acknowledges halt.
+        val current = readMem32(StLinkProtocol.ADDR_DHCSR)
+        writeMem32Word(StLinkProtocol.ADDR_DHCSR, 0xA05F0003L or (current and 8L))
+        val deadline = System.nanoTime() + 500_000_000L
+        while (!isHalted()) {
+            check(System.nanoTime() < deadline) { "目标停核超时" }
+            Thread.sleep(1)
         }
-        val loader = if (useRamLoader) F1RamLoader(loaderTarget(), checkCancelled) else null
-        Log.i("CornUsb", "F1 programming: ${if (useRamLoader) "RAM loader" else "native half-word"} ${probeVersion.label}")
-        val debugControl = if (useRamLoader) readMem32(0xE0042004L) else null
-        var programmingFailure: Throwable? = null
-        try {
-            if (debugControl != null) {
-                // F1 DBGMCU_CR: freeze IWDG/WWDG while the core waits for USB between chunks.
-                writeMem32Word(0xE0042004L, debugControl or 0x300L)
-                check(readMem32(0xE0042004L) and 0x300L == 0x300L) { "无法冻结调试态看门狗；未执行擦除" }
-            }
-            F1FlashProgrammer(memory, ramLoader = loader, checkCancelled = checkCancelled)
-                .execute(plan, pages, options, onProgress)
-        } catch (error: Throwable) {
-            programmingFailure = error
-            Log.e("CornUsb", "F1 programming failed", error)
-            throw error
-        } finally {
-            if (debugControl != null) try {
-                writeMem32Word(0xE0042004L, debugControl)
-            } catch (cleanup: Throwable) {
-                if (programmingFailure != null) programmingFailure.addSuppressed(cleanup) else throw cleanup
-            }
+        writeMem32Word(StLinkProtocol.ADDR_DHCSR, 0xA05F0003L)
+    }
+    override fun isHalted() = readMem32(StLinkProtocol.ADDR_DHCSR) and (1L shl 17) != 0L
+    private fun waitRegisterReady() {
+        val deadline = System.nanoTime() + 500_000_000L
+        while (readMem32(StLinkProtocol.ADDR_DHCSR) and (1L shl 16) == 0L) {
+            check(System.nanoTime() < deadline) { "核心寄存器传输超时" }
+            Thread.sleep(1)
         }
     }
-
-    /** Cortex-M3 debug register transfer handshake; no newer ST-LINK opcodes required. */
-    private fun loaderTarget(): F1LoaderTarget = object : F1LoaderTarget {
-        override fun readWord(address: Long) = readMem32(address)
-        override fun writeRam(address: Long, data: ByteArray) {
-            require(address >= 0x20000000L && address + data.size <= 0x20000400L &&
-                address % 4 == 0L && data.size % 4 == 0) { "RAM loader 上传范围/对齐无效" }
-            writeMemBytes(address, data)
-        }
-        override fun readBytes(address: Long, length: Int) = readMemBytes(address, length)
-        override fun readCoreRegister(index: Int): Long {
-            require(index in 0..16)
-            check(isHalted()) { "读核心寄存器 R$index 前目标未停核；RCC_CSR=0x${readMem32(0x40021024L).toString(16)} DBGMCU_CR=0x${readMem32(0xE0042004L).toString(16)}" }
-            writeMem32Word(0xE000EDF4L, index.toLong())
-            waitRegisterReady()
-            return readMem32(0xE000EDF8L)
-        }
-        override fun writeCoreRegister(index: Int, value: Long) {
-            require(index in 0..16)
-            check(isHalted()) { "写核心寄存器前目标未停核" }
-            writeMem32Word(0xE000EDF8L, value)
-            writeMem32Word(0xE000EDF4L, 0x10000L or index.toLong())
-            waitRegisterReady()
-        }
-        override fun resume() {
-            check(isHalted()) { "RAM loader 启动前目标未停核" }
-            // C_MASKINTS must change while halted; keep application ISRs out of the loader.
-            writeMem32Word(StLinkProtocol.ADDR_DHCSR, 0xA05F000BL)
-            writeMem32Word(StLinkProtocol.ADDR_DHCSR, 0xA05F0009L)
-        }
-        override fun halt() {
-            writeMem32Word(StLinkProtocol.ADDR_DHCSR, 0xA05F000BL)
+    override fun resetAndRun() {
+        val demcr = readMem32(0xE000EDFCL)
+        var resetFailure: Throwable? = null
+        try {
+            writeMem32Word(0xE000EDFCL, demcr and 1L.inv()) // Clear reset vector catch.
+            writeMem32Word(0xE000ED30L, 0x1F) // Clear stale debug fault/ BKPT flags (W1C).
+            readMem32(StLinkProtocol.ADDR_DHCSR) // Clear sticky S_RESET_ST before reset.
+            writeMem32Word(0xE000ED0CL, 0x05FA0004L)
             val deadline = System.nanoTime() + 500_000_000L
-            while (!isHalted()) {
-                check(System.nanoTime() < deadline) { "RAM loader 停核超时" }
+            while (readMem32(StLinkProtocol.ADDR_DHCSR) and (1L shl 25) != 0L) {
+                check(System.nanoTime() < deadline) { "软件复位未完成" }
                 Thread.sleep(1)
             }
-            writeMem32Word(StLinkProtocol.ADDR_DHCSR, 0xA05F0003L)
-        }
-        override fun isHalted() = readMem32(StLinkProtocol.ADDR_DHCSR) and (1L shl 17) != 0L
-        private fun waitRegisterReady() {
-            val deadline = System.nanoTime() + 500_000_000L
-            while (readMem32(StLinkProtocol.ADDR_DHCSR) and (1L shl 16) == 0L) {
-                check(System.nanoTime() < deadline) { "核心寄存器传输超时" }
+            StLinkProtocol.requireStatusOk(xfer(StLinkProtocol.unhaltCore(), 2), "解除停核")
+            val runDeadline = System.nanoTime() + 500_000_000L
+            while (readMem32(StLinkProtocol.ADDR_DHCSR) and (1L shl 17) != 0L) {
+                check(System.nanoTime() < runDeadline) { "复位后目标仍停核" }
                 Thread.sleep(1)
+            }
+            Log.i("CornUsb", "AIRCR SYSRESETREQ completed; target running")
+        } catch (error: Throwable) {
+            resetFailure = error
+            throw error
+        } finally {
+            try { writeMem32Word(0xE000EDFCL, demcr) } catch (cleanup: Throwable) {
+                if (resetFailure != null) resetFailure.addSuppressed(cleanup) else throw cleanup
             }
         }
     }

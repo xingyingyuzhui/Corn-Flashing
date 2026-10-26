@@ -9,6 +9,9 @@ import dev.corn.flashing.core.FlashPlan
 import dev.corn.flashing.core.FlashProgress
 import dev.corn.flashing.core.FlashStage
 import dev.corn.flashing.core.TargetInfo
+import dev.corn.flashing.core.engine.*
+import dev.corn.flashing.core.targets.TargetCatalog
+import dev.corn.flashing.flash.Stm32F1Algorithm
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -31,12 +34,16 @@ class StLinkHardwareBackend(
     @Volatile private var lastTarget: TargetInfo? = null
     @Volatile private var lastVoltageMv: Int = 0
 
-    val voltageMv: Int get() = lastVoltageMv
+    @Volatile private var lastProbeInfo: ProbeInfo? = null
+    override val probeInfo: ProbeInfo? get() = lastProbeInfo
+    override val targetVoltageMv: Int get() = lastVoltageMv
+    val voltageMv: Int get() = targetVoltageMv
     val probed: TargetInfo? get() = lastTarget
 
     override suspend fun probe(): TargetInfo = sessionMutex.withLock { withContext(Dispatchers.IO) {
         StLinkUsbSession.open(manager, device).use { session ->
             val target = session.identify()
+            lastProbeInfo = session.probeInfo
             lastVoltageMv = session.voltageMv
             lastTarget = target
             target
@@ -53,6 +60,7 @@ class StLinkHardwareBackend(
             currentCoroutineContext().ensureActive()
             onProgress(FlashProgress(FlashStage.PROBING, 0.15f, "识别芯片"))
             val live = session.identify()
+            lastProbeInfo = session.probeInfo
             lastVoltageMv = session.voltageMv
             lastTarget = live
             require(live.deviceId == plan.target.deviceId && live.flashSizeBytes == plan.target.flashSizeBytes &&
@@ -67,18 +75,14 @@ class StLinkHardwareBackend(
                 ),
             )
 
+            val descriptor = TargetCatalog.requireProgrammable(live)
+            val algorithm = algorithms.resolve(descriptor, session.probeInfo, live)
             val pages = erasePages(plan, options)
             require(pages.isNotEmpty()) { "没有需要擦除的页" }
             val cancellation = currentCoroutineContext()
             try {
-                session.programF1(
-                    plan = plan,
-                    pages = pages,
-                    options = options,
-                    checkCancelled = { cancellation.ensureActive() },
-                ) { stage, frac, msg ->
-                    onProgress(FlashProgress(stage, frac, msg))
-                }
+                algorithm.execute(session, plan, pages, options,
+                    checkCancelled = { cancellation.ensureActive() }, onProgress = onProgress)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -90,25 +94,14 @@ class StLinkHardwareBackend(
 
     private fun erasePages(plan: FlashPlan, options: FlashExecuteOptions): List<Long> {
         if (options.eraseMode != 1) return plan.erasePageAddresses
-        // Whole-chip page erase within profile capacity (still only Flash range; no option bytes).
-        val start = plan.profile.flashStart
-        val end = start + plan.profile.flashSizeBytes
-        val page = plan.profile.pageSize.toLong()
-        val reserved = plan.profile.reservedRanges
-        val all = mutableListOf<Long>()
-        var addr = start
-        while (addr < end) {
-            val pageEnd = addr + page
-            val overlapsReserved = reserved.any { r ->
-                addr < r.endExclusive && pageEnd > r.start
-            }
-            if (!overlapsReserved) all += addr
-            addr = pageEnd
-        }
-        return all
+        val descriptor = TargetCatalog.requireProgrammable(plan.target)
+        return descriptor.geometry.sectors(descriptor.flashStart, plan.target.flashSizeBytes)
+            .filter { sector -> plan.profile.reservedRanges.none { it.overlaps(sector.range) } }
+            .map { it.address }
     }
 
     companion object {
+        private val algorithms = FlashAlgorithmRegistry(listOf(Stm32F1Algorithm()))
         // All backend instances share the same physical USB bus/probe access boundary.
         private val sessionMutex = Mutex()
         fun findAuthorized(manager: UsbManager, candidates: List<UsbProbe>): UsbDevice? {

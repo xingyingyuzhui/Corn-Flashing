@@ -114,3 +114,7 @@ GRADLE_USER_HOME="$HOME/.gradle" ./gradlew :core:test :app:assembleDebug :app:li
 - 第三方代码、Gradle Wrapper 和构建依赖继续遵循各自许可证，不适用本项目对原创内容的重新授权。
 
 由于包含非商业用途限制，本项目属于“源码可用”（source-available），不属于 OSI 定义的开源软件。参见 [OSI 开源定义第 6 条](https://opensource.org/osd) 与 [PolyForm 官方条款](https://polyformproject.org/licenses/noncommercial/1.0.0)。
+
+## 兼容性引擎
+
+通用探针接口、芯片描述库和算法注册已接入；当前真实烧录算法为单Bank STM32F1，F0/F4指定设备组仅识别。具体支持范围与实测组合见[兼容引擎架构](docs/architecture/compatibility-engine.md)，最新验证见[test10记录](docs/test-build-0.1.6-test10.md)。CMSIS-Pack/FLM执行器仍待后续实现。

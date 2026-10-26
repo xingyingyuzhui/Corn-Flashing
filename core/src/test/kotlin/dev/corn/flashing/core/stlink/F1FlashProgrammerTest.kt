@@ -118,7 +118,9 @@ class F1FlashProgrammerTest {
 
     @Test fun unsupportedDualBankRejectedBeforeAnyErase() {
         val image = FirmwareImage(FirmwareFormat.BIN, listOf(FirmwareSegment(base, byteArrayOf(1, 2))), "test")
-        val plan = FlashPlanner.plan(image, ProductProfiles.F103_OPEN, TargetInfo(0x430, 1, 1024L * 1024, "TEST", "F1"))
+        val unsupported = TargetInfo(0x430, 1, 1024L * 1024, "TEST", "F1")
+        // A manually assembled legacy plan still cannot bypass the algorithm's execution guard.
+        val plan = FlashPlan(image, ProductProfiles.alignedTo(ProductProfiles.F103_OPEN, unsupported), unsupported, listOf(base))
         val memory = Memory()
         assertThrows(IllegalArgumentException::class.java) {
             F1FlashProgrammer(memory).execute(plan, plan.erasePageAddresses, FlashExecuteOptions()) { _, _, _ -> }

@@ -27,6 +27,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.corn.flashing.core.targets.TargetCatalog
+import dev.corn.flashing.core.targets.TargetSupport
 import dev.corn.flashing.core.ProductProfile
 import dev.corn.flashing.core.TargetInfo
 import dev.corn.flashing.core.FirmwarePreflight
@@ -144,7 +146,7 @@ private fun EmptyLibrary(vm: FlashViewModel, state: SessionState, onPick: () -> 
     Label("导入失败示例")
     Banner("HEX 校验和错误", "第 37 行校验和不对，文件可能在传输时损坏。请重新从电脑拷贝。")
     Banner("BIN 需要起始地址", "BIN 文件不带地址信息，请先填写起始地址（常见 0x08000000）。", tone = ChipTone.WARN)
-    Banner("超出 Flash 范围", "固件写到 0x08010400，超过 F103 · 64 KB。可能选错了产品配置。")
+    Banner("超出 Flash 范围", "固件地址超过目标芯片的允许范围，请检查固件与芯片容量。")
 }
 
 fun importErrorAdvice(error: String): Pair<String, String> = when {
@@ -263,7 +265,8 @@ fun ConfigTab(vm: FlashViewModel) {
     TopBar("产品配置", "设备组与容量按探测自动匹配") {
         when {
             prefs.simulator -> SimMark()
-            probed != null -> Chip("已自动匹配", ChipTone.OK, dot = true)
+            probed != null && TargetCatalog.find(probed.deviceId)?.support == TargetSupport.FLASH_ALGORITHM -> Chip("算法已匹配", ChipTone.OK, dot = true)
+            probed != null -> Chip("仅识别", ChipTone.WARN, dot = true)
             else -> Chip("未探测", ChipTone.WARN)
         }
     }
@@ -278,15 +281,38 @@ fun ConfigTab(vm: FlashViewModel) {
         CornCard {
             Label("目标芯片（自动匹配）")
             KeyValue("设备组", probed?.let { "0x${it.deviceId.toString(16)} · ${it.family}" } ?: "探测后写入", mono = true)
-            KeyValue("Flash 容量", "${p.flashSizeBytes / 1024} KB" +
-                if (probed == null) " · 占位" else " · 芯片报告", mono = true)
-            KeyValue("页大小", "${p.pageSize} B", mono = true)
+            KeyValue("Flash 容量", probed?.takeIf { it.flashSizeBytes > 0 }?.let {
+                "${it.flashSizeBytes / 1024} KB · 芯片报告"
+            } ?: "待探测", mono = true)
+            val descriptor = probed?.let { TargetCatalog.find(it.deviceId) }
+            val sectorSizes = descriptor?.let {
+                runCatching { it.geometry.sectors(p.flashStart, p.flashSizeBytes).map { sector -> sector.sizeBytes }.distinct() }.getOrNull()
+            }
+            KeyValue("擦除布局", sectorSizes?.joinToString(" / ") { "$it B" } ?: "待识别", mono = true)
             KeyValue("UID", probed?.uid ?: "—", mono = true, last = true)
-            T("开放配置：小/中/大/超大容量（0x412 / 0x410 / 0x414 / 0x430）均可；探测成功后自动对齐页大小与容量。",
+            T("按芯片描述匹配内存布局；只有同时匹配烧录算法和探针能力的目标才开放擦写。",
                 CornColors.Dim, 12.sp, modifier = Modifier.padding(top = 8.dp))
             Row(Modifier.fillMaxWidth().padding(top = 7.dp), verticalAlignment = Alignment.CenterVertically) {
                 T("固件超出容量时", CornColors.Dim, 13.sp, modifier = Modifier.weight(1f)); Chip("拒绝烧录", ChipTone.BAD)
             }
+        }
+        CornCard(spacing = 10.dp) {
+            Label("内置芯片兼容性")
+            TargetCatalog.descriptors.forEach { descriptor ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        T(descriptor.family, size = 13.sp, weight = FontWeight.SemiBold)
+                        T("设备组 0x${descriptor.deviceId.toString(16)}", CornColors.Mute, 11.sp, mono = true)
+                    }
+                    val programmable = descriptor.support == TargetSupport.FLASH_ALGORITHM
+                    Chip(if (programmable) "算法已接入" else "仅识别", if (programmable) ChipTone.OK else ChipTone.WARN)
+                }
+            }
+            DividerLine()
+            T("实板验证记录：STM32F1 大容量 256 KB + ST-LINK/V2 J23 + Xiaomi 25060RK16C / Android 17，已通过擦写、回读和复位。",
+                CornColors.Dim, 11.5.sp)
+            T("这条验证记录不代表整个系列均已实测；“仅识别”目标不会执行擦除或写入。", CornColors.Mute, 11.5.sp)
         }
         CornCard(spacing = 8.dp) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -295,7 +321,8 @@ fun ConfigTab(vm: FlashViewModel) {
             }
             if (p.reservedRanges.isEmpty()) {
                 Box(Modifier.fillMaxWidth().height(18.dp).clip(RoundedCornerShape(6.dp)).background(CornColors.Surface3))
-                T("当前预设没有保留区：整片 ${p.flashStart.hexAddress()} – ${(p.flashStart + p.flashSizeBytes - 1).hexAddress()} 都可写", CornColors.Dim, 12.sp)
+                T(if (probed == null) "尚未识别目标：先探测 Flash 容量与布局，再检查可写范围。"
+                    else "当前没有保留区：Flash 范围 ${p.flashStart.hexAddress()} – ${(p.flashStart + p.flashSizeBytes - 1).hexAddress()}；实际擦写仍需通过兼容性预检。", CornColors.Dim, 12.sp)
                 T("示例：Bootloader 0x08000000–0x08001FFF 不擦写；参数区 0x0800F800 起保留", CornColors.Mute, 11.sp)
             } else p.reservedRanges.forEach { r ->
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -312,7 +339,7 @@ fun ConfigTab(vm: FlashViewModel) {
             Seg(listOf("回读全部", "CRC32", "不校验"), prefs.verifyMode, { prefs.verifyMode = it })
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 T("SWD 速率", CornColors.Dim, 13.sp, modifier = Modifier.weight(1f))
-                T("4.0 MHz", size = 13.sp, weight = FontWeight.SemiBold, mono = true)
+                T("探针默认速率", size = 13.sp, weight = FontWeight.SemiBold)
             }
         }
         Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(CornColors.Surface1)
@@ -347,6 +374,24 @@ fun DevicesTab(vm: FlashViewModel, devices: List<UsbProbe>) {
             T(usbMessage, CornColors.Mute, 11.sp)
         }
         devices.forEach { DeviceCard(it, vm) }
+        state.probeInfo?.let { probeInfo ->
+            CornCard(spacing = 8.dp) {
+                Label("探针能力 · 最近一次识别")
+                KeyValue("探针", probeInfo.label)
+                KeyValue("固件", probeInfo.firmware, mono = true)
+                KeyValue("编程路径", probeInfo.programmingPath)
+                KeyValue("USB 通道", probeInfo.transport)
+                val descriptor = state.target?.let { TargetCatalog.find(it.deviceId) }
+                KeyValue("当前目标", when {
+                    state.target == null -> "尚未识别"
+                    descriptor == null -> "未登记 · 不开放擦写"
+                    descriptor.support == TargetSupport.IDENTIFY_ONLY -> "仅识别 · 不开放擦写"
+                    else -> "算法已接入 · 烧录前检查探针能力"
+                }, last = true)
+                T(probeInfo.capabilities.joinToString(" · ") { it.label }.ifBlank { "暂无可用编程能力" }, CornColors.Dim, 11.5.sp)
+                T("USB 授权只代表允许访问探针，不代表已支持目标芯片的擦写。", CornColors.Mute, 11.5.sp)
+            }
+        }
         state.usbDiagnostic?.takeIf { it.isNotBlank() }?.let { diagnostic ->
             UsbDiagnosticCard(diagnostic, vm)
         }

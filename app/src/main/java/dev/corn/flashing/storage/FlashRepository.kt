@@ -4,7 +4,8 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import dev.corn.flashing.core.*
-import dev.corn.flashing.usb.StLinkHardwareBackend
+import dev.corn.flashing.core.engine.ProbeInfo
+import dev.corn.flashing.core.targets.TargetCatalog
 import kotlinx.coroutines.*
 
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -52,6 +53,7 @@ data class SessionState(
     val failedStage: FlashStage? = null,
     /** Last target voltage from a real probe, millivolts; 0 if unknown / sim. */
     val voltageMv: Int = 0,
+    val probeInfo: ProbeInfo? = null,
 )
 
 /** Starts the foreground service for a prepared job; false if Android refused (e.g. app in background). */
@@ -75,8 +77,8 @@ class FlashRepository(
     val profile: ProductProfile
         get() {
             val target = _state.value.target
-            return if (target != null) ProductProfiles.alignedTo(ProductProfiles.F103_OPEN, target)
-            else ProductProfiles.F103_OPEN
+            return if (target != null) runCatching { ProductProfiles.alignedTo(ProductProfiles.AUTO_DETECT, target) }
+                .getOrDefault(ProductProfiles.AUTO_DETECT) else ProductProfiles.AUTO_DETECT
         }
     private var pending: Pair<JobEntity, Pair<ImportedFirmware, JobRequest>>? = null
     private val _finished = MutableSharedFlow<JobEntity>(extraBufferCapacity = 16)
@@ -252,11 +254,12 @@ class FlashRepository(
                     ?: error("未找到已授权的 ST-LINK，请在设备页授权后再试")
             }
             val target = backend.probe()
-            val mv = (backend as? StLinkHardwareBackend)?.voltageMv ?: 0
+            val mv = backend.targetVoltageMv
             if (!backend.isSimulation) saveProbedTarget(target)
-            val plan = FlashPlanner.plan(firmware.image, ProductProfiles.F103_OPEN, target)
+            _state.update { it.copy(target = target, voltageMv = mv, probeInfo = backend.probeInfo) }
+            val plan = FlashPlanner.plan(firmware.image, ProductProfiles.AUTO_DETECT, target)
             record = record.copy(targetUid = target.uid, mode = if (backend.isSimulation) "DEMO" else "STLINK")
-            _state.update { it.copy(target = target, plan = plan, voltageMv = mv) }
+            _state.update { it.copy(target = target, plan = plan, voltageMv = mv, probeInfo = backend.probeInfo) }
             backend.execute(plan, request.executeOptions) { event ->
                 _state.update { it.copy(progress = event.fraction, flashStage = event.stage, stage = stageLabel(event.stage), message = event.message) }
             }
@@ -299,14 +302,15 @@ class FlashRepository(
         try {
             val backend = realBackend.open() ?: error("未找到已授权的 ST-LINK")
             val target = backend.probe()
-            val mv = (backend as? StLinkHardwareBackend)?.voltageMv ?: 0
+            val mv = backend.targetVoltageMv
             saveProbedTarget(target)
             _state.update {
                 it.copy(
                     target = target,
                     voltageMv = mv,
+                    probeInfo = backend.probeInfo,
                     usbDiagnostic = null,
-                    message = "已自动匹配 ${ProductProfiles.alignedTo(ProductProfiles.F103_OPEN, target).name}" +
+                    message = "已自动匹配 ${ProductProfiles.alignedTo(ProductProfiles.AUTO_DETECT, target).name}" +
                         (target.uid?.let { u -> " · $u" } ?: ""),
                 )
             }

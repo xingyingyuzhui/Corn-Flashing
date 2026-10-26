@@ -1,67 +1,37 @@
 package dev.corn.flashing.core
 
-/**
- * Product templates and probe alignment.
- * Capacity / page size / device group come from the probed [TargetInfo], not a fixed 64 KB lock.
- */
+import dev.corn.flashing.core.targets.TargetCatalog
+
+/** Product policy is kept separate from the chip's data-driven memory geometry. */
 object ProductProfiles {
     data class DeviceGeometry(val capacitiesKiB: Set<Long>, val pageSize: Int)
 
-    /** F1 device groups supported for planning (not a complete STM32 ordering table). */
-    val GEOMETRY: Map<Int, DeviceGeometry> = mapOf(
-        0x412 to DeviceGeometry(setOf(16, 32), 1024),
-        0x410 to DeviceGeometry(setOf(64, 128), 1024),
-        0x414 to DeviceGeometry(setOf(256, 384, 512), 2048),
-        0x430 to DeviceGeometry(setOf(768, 1024), 2048),
-    )
-
+    /** Legacy F1 aliases remain stable for existing stored profiles/batch hashes. */
+    val GEOMETRY: Map<Int, DeviceGeometry> = TargetCatalog.descriptors
+        .filter { it.key.startsWith("stm32f1-") }
+        .associate { it.deviceId to DeviceGeometry(it.allowedCapacityKiB, it.geometry.minimumSectorSize) }
     val ALL_DEVICE_IDS: Set<Int> = GEOMETRY.keys
 
-    /**
-     * Open template: accepts every known F1 group; capacity/page size are placeholders
-     * until [alignedTo] runs after a successful probe.
-     */
     val F103_OPEN = ProductProfile(
-        id = "f103-open",
-        name = "STM32F1 · 探测后自动匹配",
-        flashStart = 0x08000000L,
-        flashSizeBytes = 64L * 1024,
-        pageSize = 1024,
-        reservedRanges = emptyList(),
-        expectedDeviceIds = ALL_DEVICE_IDS,
+        id = "f103-open", name = "STM32F1 · 探测后自动匹配",
+        flashStart = 0x08000000L, flashSizeBytes = 64L * 1024, pageSize = 1024,
+        reservedRanges = emptyList(), expectedDeviceIds = ALL_DEVICE_IDS,
     )
-
-    /** @deprecated Use [F103_OPEN]; kept as alias so call sites compile during the rename. */
     val F103_MEDIUM: ProductProfile get() = F103_OPEN
 
-    fun geometryOf(deviceId: Int): DeviceGeometry? = GEOMETRY[deviceId]
+    /** No chip is selected until probing; placeholder geometry must never authorise an erase. */
+    val AUTO_DETECT = ProductProfile(
+        id = "auto-detect", name = "自动匹配芯片",
+        expectedDeviceIds = TargetCatalog.descriptors.map { it.deviceId }.toSet(),
+    )
 
-    fun familyName(deviceId: Int): String = when (deviceId) {
-        0x412 -> "STM32F1 小容量"
-        0x410 -> "STM32F1 中容量"
-        0x414 -> "STM32F1 大容量"
-        0x430 -> "STM32F1 超大容量"
-        else -> "STM32 0x${deviceId.toString(16)}"
+    fun geometryOf(deviceId: Int): DeviceGeometry? = TargetCatalog.find(deviceId)?.let {
+        DeviceGeometry(it.allowedCapacityKiB, it.geometry.minimumSectorSize)
     }
+    fun familyName(deviceId: Int): String = TargetCatalog.find(deviceId)?.family ?: "STM32 0x${deviceId.toString(16)}"
 
-    /**
-     * Pin [template] to the probed chip: device id, Flash size, page size and display name.
-     * Reserved ranges are kept; [FlashPlanner] still checks they fit the new capacity.
-     */
-    fun alignedTo(template: ProductProfile, target: TargetInfo): ProductProfile {
-        val geo = requireNotNull(GEOMETRY[target.deviceId]) {
-            "未知或尚未支持的芯片设备组 0x${target.deviceId.toString(16)}"
-        }
-        val kib = target.flashSizeBytes / 1024
-        require(target.flashSizeBytes % 1024L == 0L && kib in geo.capacitiesKiB) {
-            "芯片报告的 Flash 容量异常：${kib} KiB（设备组 0x${target.deviceId.toString(16)}）"
-        }
-        return template.copy(
-            id = "f103-0x${target.deviceId.toString(16)}-${kib}k",
-            name = "${familyName(target.deviceId)} · $kib KB",
-            flashSizeBytes = target.flashSizeBytes,
-            pageSize = geo.pageSize,
-            expectedDeviceIds = setOf(target.deviceId),
-        )
-    }
+    /** Read-only targets can align for display; the planner separately requires an installed algorithm. */
+    fun alignedTo(template: ProductProfile, target: TargetInfo): ProductProfile = requireNotNull(TargetCatalog.find(target.deviceId)) {
+        "未知或尚未支持的芯片设备组 0x${target.deviceId.toString(16)}"
+    }.profileFor(target, template)
 }

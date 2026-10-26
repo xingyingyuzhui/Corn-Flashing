@@ -35,6 +35,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.corn.flashing.core.FlashStage
 import dev.corn.flashing.core.FirmwarePreflight
 import dev.corn.flashing.core.isFirmwareConfigurationError
+import dev.corn.flashing.core.targets.TargetCatalog
+import dev.corn.flashing.core.targets.TargetSupport
 import dev.corn.flashing.core.TargetInfo
 import dev.corn.flashing.core.DemoFlashBackend
 import dev.corn.flashing.core.ProductProfiles
@@ -292,7 +294,11 @@ private fun Workbench(
         BatchWorkbench(vm, state, batch, onMode, onSettings, onNewBatch)
         return
     }
-    TopBar("Corn Flashing", "离线烧录 · STM32F103") {
+    TopBar("Corn Flashing", when {
+        sim -> "模拟烧录 · 演示板"
+        state.target != null -> "离线烧录 · ${state.target.family}"
+        else -> "离线烧录 · 自动识别目标"
+    }) {
         if (probeOk) Chip("工位 1", ChipTone.OK, dot = true) else Chip("未就绪", ChipTone.BAD, dot = true)
         IconBtn(Lucide.Gear, onSettings)
     }
@@ -301,7 +307,7 @@ private fun Workbench(
         Chain(
             ChainNode(Lucide.Phone, "Android", if (vm.hostSupported) (if (probe?.permissionGranted == true) "OTG 已授权" else "OTG 可用") else "无 USB Host",
                 if (vm.hostSupported) CornColors.Leaf else CornColors.Red),
-            ChainNode(Lucide.Usb, "ST-LINK/V2", when { sim -> "模拟器"; probe == null -> "未连接"; probe.permissionGranted -> probe.serial?.take(8) ?: "已授权"; else -> "待授权" },
+            ChainNode(Lucide.Usb, state.probeInfo?.label ?: "烧录探针", when { sim -> "模拟器"; probe == null -> "未连接"; probe.permissionGranted -> state.probeInfo?.firmware ?: "已授权"; else -> "待授权" },
                 if (probeOk) CornColors.Leaf else if (probe != null) CornColors.Corn else CornColors.Red),
             ChainNode(
                 Lucide.Chip,
@@ -317,7 +323,9 @@ private fun Workbench(
                     else -> "未识别"
                 },
                 when {
-                    sim || state.target != null -> CornColors.Leaf
+                    sim -> CornColors.Leaf
+                    state.target != null && TargetCatalog.find(state.target.deviceId)?.support == TargetSupport.FLASH_ALGORITHM -> CornColors.Leaf
+                    state.target != null -> CornColors.Corn
                     else -> CornColors.Red
                 },
             ),
@@ -346,6 +354,18 @@ private fun Workbench(
                 subtitle = state.target?.let { "${it.family} · ${it.flashSizeBytes / 1024} KB" } ?: "读 DBGMCU / Flash 容量 / UID",
             )
         }
+        if (!sim) state.target?.let { target ->
+            val descriptor = TargetCatalog.find(target.deviceId)
+            val programmable = descriptor?.support == TargetSupport.FLASH_ALGORITHM
+            CornCard(spacing = 6.dp) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Label("当前目标兼容性", Modifier.weight(1f))
+                    Chip(if (programmable) "算法已接入" else if (descriptor == null) "未登记" else "仅识别", if (programmable) ChipTone.OK else ChipTone.WARN)
+                }
+                T(if (programmable) "已匹配内置烧录算法；烧录前仍会检查探针能力、容量和固件范围。"
+                    else "已识别目标信息，当前没有匹配的烧录算法，暂不开放擦写。", CornColors.Dim, 12.sp)
+            }
+        }
         FirmwareCard(state.firmware, effectiveProfile(state, vm), onGoFirmware, vm)
         val firmware = state.firmware
         val preflight = firmware?.let { FirmwarePreflight.inspect(it.image, effectiveProfile(state, vm), effectiveTarget(state, vm)) }
@@ -355,7 +375,7 @@ private fun Workbench(
             subtitle = when {
                 state.probing -> "识别中，请等待 USB 通信完成"
                 firmware == null -> "先选择固件"
-                preflight?.error != null -> "固件不符合目标容量或配置"
+                preflight?.error != null -> "当前目标或固件未通过烧录预检"
                 preflight?.targetKnown != true -> "先识别目标容量，再检查并烧录"
                 sim -> "模拟 · 擦除 $pages 页 · 写入 ${kb(firmware.image.totalBytes)}"
                 else -> "真实擦写 · ${pages ?: "?"} 页 · 回读校验"
@@ -405,16 +425,26 @@ fun effectiveTarget(state: SessionState, vm: FlashViewModel): TargetInfo? =
     else state.target?.takeUnless { it.uid?.startsWith("DEMO-") == true }
 
 fun effectiveProfile(state: SessionState, vm: FlashViewModel): ProductProfile {
-    val target = effectiveTarget(state, vm) ?: return ProductProfiles.F103_OPEN
-    return ProductProfiles.alignedTo(ProductProfiles.F103_OPEN, target)
+    val target = effectiveTarget(state, vm) ?: return ProductProfiles.AUTO_DETECT
+    return runCatching { ProductProfiles.alignedTo(ProductProfiles.AUTO_DETECT, target) }
+        .getOrDefault(ProductProfiles.AUTO_DETECT)
 }
 
-fun erasePages(firmware: ImportedFirmware, profile: ProductProfile): Int =
-    firmware.image.segments.flatMap { s ->
-        val first = (s.address - profile.flashStart) / profile.pageSize
-        val last = (s.endAddressExclusive - 1 - profile.flashStart) / profile.pageSize
+fun erasePages(firmware: ImportedFirmware, profile: ProductProfile): Int {
+    val descriptor = profile.expectedDeviceIds.singleOrNull()?.let(TargetCatalog::find)
+    if (descriptor != null) {
+        return descriptor.geometry.sectors(profile.flashStart, profile.flashSizeBytes).count { sector ->
+            firmware.image.segments.any { segment ->
+                segment.address < sector.address + sector.sizeBytes && segment.endAddressExclusive > sector.address
+            }
+        }
+    }
+    return firmware.image.segments.flatMap { segment ->
+        val first = (segment.address - profile.flashStart) / profile.pageSize
+        val last = (segment.endAddressExclusive - 1 - profile.flashStart) / profile.pageSize
         (first..last).toList()
     }.toSet().size
+}
 
 @Composable
 private fun FirmwareCard(firmware: ImportedFirmware?, profile: ProductProfile, onGoFirmware: () -> Unit, vm: FlashViewModel) {
@@ -456,7 +486,7 @@ fun MemMap(firmware: ImportedFirmware, profile: ProductProfile) {
         Row(Modifier.fillMaxWidth()) {
             T(profile.flashStart.hexAddress(), CornColors.Mute, 10.sp, mono = true)
             Spacer(Modifier.weight(1f))
-            T("F103 · ${profile.flashSizeBytes / 1024} KB", CornColors.Mute, 10.sp, mono = true)
+            T(if (profile.expectedDeviceIds.size == 1) "Flash · ${profile.flashSizeBytes / 1024} KB" else "Flash · 待探测", CornColors.Mute, 10.sp, mono = true)
             Spacer(Modifier.weight(1f))
             T((profile.flashStart + profile.flashSizeBytes - 1).hexAddress(), CornColors.Mute, 10.sp, mono = true)
         }

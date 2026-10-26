@@ -73,6 +73,8 @@ data class FlashPlan(
     val profile: ProductProfile,
     val target: TargetInfo,
     val erasePageAddresses: List<Long>,
+    /** Actual per-sector sizes, including non-uniform devices; empty only on legacy hand-built plans. */
+    val eraseSectorSizes: Map<Long, Int> = emptyMap(),
 ) {
     val writeBytes: Long get() = image.totalBytes
 }

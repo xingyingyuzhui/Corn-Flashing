@@ -7,6 +7,8 @@ import kotlinx.coroutines.ensureActive
 interface FlashBackend {
     val isSimulation: Boolean
     val displayName: String
+    val probeInfo: dev.corn.flashing.core.engine.ProbeInfo? get() = null
+    val targetVoltageMv: Int get() = 0
     suspend fun probe(): TargetInfo
     suspend fun execute(
         plan: FlashPlan,
