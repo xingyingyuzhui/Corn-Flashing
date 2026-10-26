@@ -333,7 +333,7 @@ fun Chain(vararg nodes: ChainNode) {
 
 fun effectiveProfile(state: SessionState, vm: FlashViewModel): ProductProfile {
     val target = state.target ?: return vm.profile
-    return dev.corn.flashing.core.ProductProfiles.alignedTo(dev.corn.flashing.core.ProductProfiles.F103_MEDIUM, target)
+    return dev.corn.flashing.core.ProductProfiles.alignedTo(dev.corn.flashing.core.ProductProfiles.F103_OPEN, target)
 }
 
 fun erasePages(firmware: ImportedFirmware, profile: ProductProfile): Int =

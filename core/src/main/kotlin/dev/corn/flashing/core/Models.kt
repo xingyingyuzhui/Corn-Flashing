@@ -25,14 +25,15 @@ data class FirmwareImage(
 }
 
 data class ProductProfile(
-    val id: String = "f103-medium",
-    val name: String = "STM32F103 · 中容量",
+    val id: String = "f103-open",
+    val name: String = "STM32F1 · 探测后自动匹配",
     val flashStart: Long = 0x08000000L,
     /** Placeholder until a chip is probed; planning uses [TargetInfo.flashSizeBytes]. */
     val flashSizeBytes: Long = 64L * 1024,
     val pageSize: Int = 1024,
     val reservedRanges: List<AddressRange> = emptyList(),
-    val expectedDeviceIds: Set<Int> = setOf(0x410),
+    /** Default: every known F1 group; [ProductProfiles.alignedTo] pins to the probed id. */
+    val expectedDeviceIds: Set<Int> = setOf(0x412, 0x410, 0x414, 0x430),
 ) {
     /**
      * Stable hash of every field that affects erase/write decisions.
