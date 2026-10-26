@@ -343,15 +343,18 @@ private fun TodayCard(history: List<JobEntity>) {
     val bad = today.count { it.status == "FAILED" }
     val avg = ok.mapNotNull { r -> r.finishedAt?.let { it - r.startedAt } }.takeIf { it.isNotEmpty() }?.average()?.toLong()
     CornCard(spacing = 10.dp) {
-        Label("今日 · 工位 1")
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            StatCell("${ok.size}", "成功", CornColors.Leaf, modifier = Modifier.weight(1f))
-            VDivider()
-            StatCell("$bad", "失败", CornColors.Red, modifier = Modifier.weight(1f))
-            VDivider()
-            StatCell(percent((ok.size + bad).takeIf { it > 0 }?.let { ok.size.toFloat() / it }), "良率", modifier = Modifier.weight(1f))
-            VDivider()
-            StatCell(avg?.let { "%.1f".format(it / 1000f) + "s" } ?: "—", "平均", modifier = Modifier.weight(1f))
+        Row {
+            Label("今日 · 工位 1", Modifier.weight(1f))
+            today.minOfOrNull { it.startedAt }?.let { T("${formatHm(it)} 起", CornColors.Mute, 11.sp, mono = true) }
+        }
+        Row(Modifier.fillMaxWidth()) {
+            listOf(
+                Triple("${ok.size}", "成功", CornColors.Leaf), Triple("$bad", "失败", CornColors.Red),
+                Triple(percent((ok.size + bad).takeIf { it > 0 }?.let { ok.size.toFloat() / it }), "良率", CornColors.Text),
+                Triple(avg?.let { "%.1f".format(it / 1000f) + "s" } ?: "—", "平均", CornColors.Text),
+            ).forEach { (v, l, c) ->
+                Column(Modifier.weight(1f)) { T(v, c, 22.sp, FontWeight.Bold, mono = true); T(l, CornColors.Dim, 11.5.sp) }
+            }
         }
     }
 }
