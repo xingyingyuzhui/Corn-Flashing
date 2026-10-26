@@ -2,6 +2,8 @@
 
 Android 离线单片机烧录工具的基础框架。目标为 ST-LINK/V2 + STM32F103，后续扩展其他探针和多路批量。
 
+**公开源码 · 非商业授权：[PolyForm Noncommercial 1.0.0](LICENSE)。**
+
 **当前版本只提供软件流程模拟与 USB 设备发现，不能烧录真实芯片。**
 
 ## 已实现
@@ -85,3 +87,15 @@ GRADLE_USER_HOME="$HOME/.gradle" ./gradlew :core:test :app:assembleDebug :app:li
 - [stlink](https://github.com/stlink-org/stlink)
 
 以上用于方案参考，没有复制 Now in Android 应用代码。
+
+## 许可证与商业使用
+
+本项目原创代码、文档与资源采用 [PolyForm Noncommercial License 1.0.0](LICENSE)，版权声明见 [NOTICE](NOTICE)。
+
+- 可在许可证允许的非商业用途下使用、研究、修改和分发，分发时须保留许可证与 Required Notice。
+- 商业用途需另行取得作者书面授权，不因源码公开或可免费下载而自动获得商业使用权。
+- 许可证还明确列出了个人用途与非商业组织等许可用途，具体范围、例外和条件以 [许可证原文](LICENSE) 为准。
+- 如需商业授权，请通过 [GitHub Issues](https://github.com/xingyingyuzhui/Corn-Flashing/issues) 联系维护者。提出申请不代表已获授权。
+- 第三方代码、Gradle Wrapper 和构建依赖继续遵循各自许可证，不适用本项目对原创内容的重新授权。
+
+由于包含非商业用途限制，本项目属于“源码可用”（source-available），不属于 OSI 定义的开源软件。参见 [OSI 开源定义第 6 条](https://opensource.org/osd) 与 [PolyForm 官方条款](https://polyformproject.org/licenses/noncommercial/1.0.0)。

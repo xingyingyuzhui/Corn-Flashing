@@ -1,0 +1,15 @@
+Corn Flashing
+
+Required Notice: Copyright 2026 xingyingyuzhui (https://github.com/xingyingyuzhui)
+
+The project's original source code, documentation, and assets are made available
+under the PolyForm Noncommercial License 1.0.0. See LICENSE for the full terms.
+
+Third-party components retain their original copyright notices and licenses.
+In particular, gradlew, gradlew.bat, and gradle/wrapper/gradle-wrapper.jar are
+Gradle Wrapper components and are not relicensed under PolyForm Noncommercial.
+Their existing license notices and the license embedded in the JAR are preserved.
+See third_party/gradle-wrapper-LICENSE.txt for a copy of the embedded license.
+
+Build dependencies retain their respective licenses. The project license does
+not replace or restrict rights independently granted by those licenses.
