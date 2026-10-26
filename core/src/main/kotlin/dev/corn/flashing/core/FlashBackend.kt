@@ -8,7 +8,11 @@ interface FlashBackend {
     val isSimulation: Boolean
     val displayName: String
     suspend fun probe(): TargetInfo
-    suspend fun execute(plan: FlashPlan, onProgress: (FlashProgress) -> Unit)
+    suspend fun execute(
+        plan: FlashPlan,
+        options: FlashExecuteOptions = FlashExecuteOptions(),
+        onProgress: (FlashProgress) -> Unit,
+    )
 }
 
 /** A simulated failure: the run stops at [stage] with [message] instead of succeeding. */
@@ -31,15 +35,19 @@ class DemoFlashBackend(
         return target
     }
 
-    override suspend fun execute(plan: FlashPlan, onProgress: (FlashProgress) -> Unit) {
-        val steps = listOf(
-            FlashStage.CONNECTING to "模拟连接探针",
-            FlashStage.PROBING to "模拟识别芯片",
-            FlashStage.ERASING to "模拟擦除 ${plan.erasePageAddresses.size} 页",
-            FlashStage.WRITING to "模拟写入 ${plan.writeBytes} 字节",
-            FlashStage.VERIFYING to "模拟校验流程（无硬件校验）",
-            FlashStage.RESETTING to "模拟复位",
-        )
+    override suspend fun execute(
+        plan: FlashPlan,
+        options: FlashExecuteOptions,
+        onProgress: (FlashProgress) -> Unit,
+    ) {
+        val steps = buildList {
+            add(FlashStage.CONNECTING to "模拟连接探针")
+            add(FlashStage.PROBING to "模拟识别芯片")
+            add(FlashStage.ERASING to "模拟擦除 ${plan.erasePageAddresses.size} 页")
+            add(FlashStage.WRITING to "模拟写入 ${plan.writeBytes} 字节")
+            if (options.verifyMode != 2) add(FlashStage.VERIFYING to "模拟校验流程（无硬件校验）")
+            if (options.resetAfter) add(FlashStage.RESETTING to "模拟复位")
+        }
         steps.forEachIndexed { index, (stage, label) ->
             currentCoroutineContext().ensureActive()
             onProgress(FlashProgress(stage, index.toFloat() / steps.size, label))
@@ -90,6 +98,10 @@ class UnavailableHardwareBackend : FlashBackend {
     override val isSimulation = false
     override val displayName = "ST-LINK（后端待接入）"
     override suspend fun probe(): TargetInfo = unavailable()
-    override suspend fun execute(plan: FlashPlan, onProgress: (FlashProgress) -> Unit): Unit = unavailable()
+    override suspend fun execute(
+        plan: FlashPlan,
+        options: FlashExecuteOptions,
+        onProgress: (FlashProgress) -> Unit,
+    ): Unit = unavailable()
     private fun unavailable(): Nothing = throw UnsupportedOperationException("真实 ST-LINK 烧录后端尚未接入，当前不能执行真实擦写")
 }

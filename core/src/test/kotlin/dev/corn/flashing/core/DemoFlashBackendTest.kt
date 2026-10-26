@@ -14,7 +14,7 @@ class DemoFlashBackendTest {
         assertTrue(backend.isSimulation)
         assertTrue(target.uid!!.startsWith("DEMO-"))
         val progress = mutableListOf<FlashProgress>()
-        backend.execute(plan(target), progress::add)
+        backend.execute(plan(target), FlashExecuteOptions(), progress::add)
         assertEquals(FlashStage.SUCCEEDED, progress.last().stage)
         assertEquals(1f, progress.last().fraction)
         assertTrue(progress.all { it.message.contains("模拟") })
@@ -27,7 +27,7 @@ class DemoFlashBackendTest {
         val reachedWriting = CompletableDeferred<Unit>()
         val stages = mutableListOf<FlashStage>()
         val job = launch {
-            backend.execute(plan(target)) {
+            backend.execute(plan(target), FlashExecuteOptions()) {
                 stages += it.stage
                 if (it.stage == FlashStage.WRITING) reachedWriting.complete(Unit)
             }

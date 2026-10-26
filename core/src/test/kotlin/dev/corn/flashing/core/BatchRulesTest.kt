@@ -109,7 +109,7 @@ class BatchRulesTest {
         val backend = DemoFlashBackend(0, failure = DemoFailure(FlashStage.VERIFYING, "bad"))
         val plan = FlashPlanner.plan(FirmwareParser.parse("a.bin", byteArrayOf(1), 0x08000000), ProductProfile(), backend.probe())
         val stages = mutableListOf<FlashStage>()
-        val error = assertThrows(FlashFailure::class.java) { runBlocking { backend.execute(plan) { stages += it.stage } } }
+        val error = assertThrows(FlashFailure::class.java) { runBlocking { backend.execute(plan, FlashExecuteOptions()) { stages += it.stage } } }
         assertEquals(FlashStage.VERIFYING, error.stage)
         assertFalse(FlashStage.SUCCEEDED in stages)
     }

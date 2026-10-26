@@ -4,7 +4,7 @@ Android 离线单片机烧录工具的基础框架。目标为 ST-LINK/V2 + STM3
 
 **公开源码 · 非商业授权：[PolyForm Noncommercial 1.0.0](LICENSE)。**
 
-**当前 main / 开发中：模拟烧录 + 批量 UI；真实 ST-LINK/V2 可识别芯片（容量 / UID），擦写尚未接入。**
+**当前 main：模拟烧录 + 批量 UI；真实 ST-LINK/V2 可识别并擦写 STM32F1（页擦除 / 半字编程 / 回读），不改 Option Bytes。**
 
 ## 安装包
 
@@ -29,11 +29,11 @@ Android 离线单片机烧录工具的基础框架。目标为 ST-LINK/V2 + STM3
 - 深色 App：主题与 SystemBarStyle 统一强制浅色状态栏 / 导航栏图标，避免系统浅色主题下看不清时间。
 - 设备页「识别芯片」走真实探测（与工作台相同），卡片展示自动匹配的芯片系列 / 容量 / UID。
 - ST-LINK USB：打开设备后先 setConfiguration 再 claimInterface；按 PID 选择 bulk 端点；写失败重试 / UsbRequest 回退；失败页不再误显示「3.30 V · 模拟」。
+- 真实 STM32F1 擦写：规划页擦除、半字编程、回读校验、可选复位；批次可关模拟走单工位真机。
 - 模拟完成单独标记，不能被当作真实校验通过或真实板卡成功数量。
 
 ## 尚未实现
 
-- 真实擦除、写入和回读校验（探测已通）。
 - NDK + libusb + stlink 原生路线（架构长期方案；当前为 Kotlin USB 探测）。
 - ELF/AXF 加载区段解析：目前识别到该格式会明确拒绝，不会伪装导入成功。
 - 可手动编辑的产品/Bootloader/参数区配置；当前由探测自动匹配容量与设备组，保留区等仍为默认预设。

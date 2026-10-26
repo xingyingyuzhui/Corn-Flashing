@@ -54,6 +54,9 @@ class BatchController(
     val batches = dao.batches()
     private var loop: Job? = null
     private var boards: SimulatedBoards? = null
+    /** When false, each board is probed on the authorized ST-LINK (single station). */
+    private var useSimulator: Boolean = true
+    private var lastRealUid: String? = null
 
     init {
         scope.launch {
@@ -76,12 +79,16 @@ class BatchController(
     )
 
     /** Returns an error message, or null once the batch is running. */
-    suspend fun start(config: BatchConfig, injectFaults: Boolean): String? {
+    suspend fun start(config: BatchConfig, injectFaults: Boolean, useSimulator: Boolean = true): String? {
         if (_active.value != null) return "已有未结束的批次"
         val session = repository.state.value
         val firmware = session.firmware ?: return "请先选择固件"
         if (session.running || session.importing) return "当前有任务在执行"
-        runCatching { FlashPlanner.plan(firmware.image, repository.profile, DemoFlashBackend.DEFAULT_TARGET) }
+        this.useSimulator = useSimulator
+        this.lastRealUid = null
+        val planTarget = if (useSimulator) DemoFlashBackend.DEFAULT_TARGET
+        else session.target ?: return "真实批次请先在设备页或工作台「识别芯片」"
+        runCatching { FlashPlanner.plan(firmware.image, repository.profile, planTarget) }
             .onFailure { return "固件不能用于当前产品配置：${it.message}" }
         val profile = repository.profile
         val batch = BatchEntity(
@@ -91,6 +98,7 @@ class BatchController(
             firmwareName = firmware.name, sha256 = firmware.image.sourceSha256,
             profileId = profile.id, profileName = profile.name, configSha256 = profile.configSha256,
             injectFaults = injectFaults, startedAt = System.currentTimeMillis(),
+            mode = if (useSimulator) "DEMO" else "STLINK",
         )
         withContext(Dispatchers.IO) { dao.saveBatch(batch) }
         _active.value = BatchView(batch, BatchTally(), emptyList(), BatchPhase.WAITING_BOARD)
@@ -162,6 +170,32 @@ class BatchController(
         }
     }
 
+
+    private suspend fun waitForRealBoard(succeededUids: Collection<String>): TargetInfo {
+        // Poll probe until we see a chip; prefer a UID not just completed (or first board).
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            if (_active.value?.batch?.status != BatchStatus.RUNNING) error("批次已暂停")
+            try {
+                val target = repository.probeChip()
+                val uid = target.uid
+                if (uid != null && uid == lastRealUid) {
+                    delay(800)
+                    continue
+                }
+                if (uid != null && uid in succeededUids) {
+                    // Duplicate will be handled by BatchRules; still return so decide can SkipDuplicate.
+                }
+                lastRealUid = uid
+                return target
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                delay(1200)
+            }
+        }
+    }
+
     private fun runLoop() {
         loop?.cancel()
         loop = scope.launch {
@@ -177,10 +211,17 @@ class BatchController(
                 val config = config(view.batch)
                 // Resume after a process death must not replay the same simulated boards.
                 // Each board advances the UID counter by at most 3, so lastSeq * 3 is past every UID handed out so far.
-                val generator = boards ?: SimulatedBoards(
-                    Random(view.batch.startedAt + view.tally.lastSeq), view.batch.injectFaults, view.tally.lastSeq * 3L,
-                ).also { boards = it }
-                val board = generator.next(view.tally.succeededUids)
+                val board = if (useSimulator) {
+                    val generator = boards ?: SimulatedBoards(
+                        Random(view.batch.startedAt + view.tally.lastSeq), view.batch.injectFaults, view.tally.lastSeq * 3L,
+                    ).also { boards = it }
+                    generator.next(view.tally.succeededUids)
+                } else {
+                    // Wait for a (new) live target on the ST-LINK.
+                    refresh(BatchPhase.WAITING_BOARD, notice = "等待下一块板…请接好目标后保持不动")
+                    val live = waitForRealBoard(view.tally.succeededUids)
+                    SimulatedBoards.Board(live, null)
+                }
                 when (val decision = BatchRules.decide(config, view.tally, board.target.uid)) {
                     is BoardDecision.SkipDuplicate -> {
                         withContext(Dispatchers.IO) {
@@ -193,7 +234,19 @@ class BatchController(
                         refresh(BatchPhase.WAITING_BOARD, notice = "UID ${decision.uid} 已烧录过，已跳过；请换下一块板")
                     }
                     is BoardDecision.Flash -> {
-                        val request = JobRequest(board, view.batch.id, decision.seq, BatchRules.nextSerial(config, view.tally))
+                        val request = JobRequest(
+                            board = board,
+                            batchId = view.batch.id,
+                            seq = decision.seq,
+                            serialOnSuccess = BatchRules.nextSerial(config, view.tally),
+                            useSimulator = useSimulator,
+                            executeOptions = FlashExecuteOptions(
+                                // Batch uses repository profile defaults; reset on for real line.
+                                resetAfter = true,
+                                eraseMode = 0,
+                                verifyMode = 0,
+                            ),
+                        )
                         val id = repository.prepareJob(request)
                         if (id == null) { pauseNow("无法开始下一块：当前有其他任务或固件未就绪"); break }
                         val result = async(start = CoroutineStart.UNDISPATCHED) { repository.finished.first { it.id == id } }

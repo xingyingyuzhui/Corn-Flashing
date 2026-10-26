@@ -29,6 +29,7 @@ data class JobRequest(
     val serialOnSuccess: String? = null,
     /** When false, [FlashRepository] opens the real ST-LINK backend instead of the demo board. */
     val useSimulator: Boolean = true,
+    val executeOptions: FlashExecuteOptions = FlashExecuteOptions(),
 )
 
 data class SessionState(
@@ -249,7 +250,7 @@ class FlashRepository(
             val plan = FlashPlanner.plan(firmware.image, ProductProfiles.F103_OPEN, target)
             record = record.copy(targetUid = target.uid, mode = if (backend.isSimulation) "DEMO" else "STLINK")
             _state.update { it.copy(target = target, plan = plan, voltageMv = mv) }
-            backend.execute(plan) { event ->
+            backend.execute(plan, request.executeOptions) { event ->
                 _state.update { it.copy(progress = event.fraction, flashStage = event.stage, stage = stageLabel(event.stage), message = event.message) }
             }
             record = if (backend.isSimulation) {
@@ -257,7 +258,7 @@ class FlashRepository(
                     message = "模拟流程完成；未进行真实擦写或硬件校验")
             } else {
                 record.copy(status = "SUCCEEDED", stage = "完成", serial = request.serialOnSuccess,
-                    message = "真实擦写完成")
+                    message = "真实擦写与回读完成" + if (request.executeOptions.resetAfter) " · 已复位" else "")
             }
         } catch (cancelled: CancellationException) {
             record = record.copy(status = "CANCELLED", stage = "已中止",
