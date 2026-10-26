@@ -1,6 +1,6 @@
 # 基础框架交付状态
 
-日期：2026-10-26。版本：0.1.0-framework。
+日期：2026-10-26。版本：0.1.0（由 0.1.0-framework 升版；含批量模拟与 UI）。
 
 ## 实现范围
 
@@ -35,7 +35,7 @@
 - `app/build/outputs/apk/debug/app-debug.apk`
 - 包名：`dev.corn.flashing`
 - 最低 Android：10 / API 29（声明值，尚未验证设备矩阵）
-- APK SHA-256：`2b687623f03c961415a7b16e06fa7031bbf4a94e435101496c1cd5e7d3561d63`
+- APK SHA-256：`eb4b58dfdd226fba397d7f43f4f9a810c1f7decc4b77062d239ebb9468fea20d`（v0.1.0 debug）
 
 ## 下一个实现节点
 

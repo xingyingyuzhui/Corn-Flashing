@@ -4,11 +4,18 @@ Android 离线单片机烧录工具的基础框架。目标为 ST-LINK/V2 + STM3
 
 **公开源码 · 非商业授权：[PolyForm Noncommercial 1.0.0](LICENSE)。**
 
-**当前版本只提供软件流程模拟与 USB 设备发现，不能烧录真实芯片。**
+**当前版本 0.1.0：软件流程模拟、批量烧录界面与 USB 设备发现；不能烧录真实芯片。**
+
+## 安装包
+
+安装包在 GitHub Release [v0.1.0](https://github.com/xingyingyuzhui/Corn-Flashing/releases/tag/v0.1.0)，APK 不入库。
+
+- [`Corn-Flashing-0.1.0-debug.apk`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.0/Corn-Flashing-0.1.0-debug.apk)：Debug 包（模拟烧录 + USB 发现；非商店正式签名）。
 
 ## 已实现
 
-- Kotlin + Jetpack Compose：工作台、固件、设备、记录四个页面。
+- Kotlin + Jetpack Compose：工作台、固件、配置、记录、设置五个页面（深色玉米主题）。
+- 单工位连续批量烧录（模拟）：批次规则、暂停/恢复、报告与 CSV 导出；多工位并行仅展示为待做。
 - 独立纯 Kotlin `:core`：固件模型、HEX/BIN 解析、F103 页擦除计划与后端接口。
 - HEX 校验和、扩展地址、区段重叠、EOF 和地址边界检查。
 - BIN 明确填写起始地址，导入后固定源文件 SHA-256。
