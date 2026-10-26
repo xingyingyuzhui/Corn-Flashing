@@ -1,5 +1,11 @@
 # 基础框架交付状态
 
+## 2026-10-26 · 发布 v0.1.3（合并 fix-device-probe-statusbar）
+
+- PR #4 已合入 main；versionCode 5 / versionName 0.1.3。
+- 设备页「识别芯片」接入真实探测；卡片展示系列 / 容量 / UID。
+- 主题与 SystemBarStyle 统一强制浅色状态栏图标。
+
 ## 2026-10-26 · 发布 v0.1.2（合并 config-auto-match）
 
 - PR #3 已合入 main；versionCode 4 / versionName 0.1.2。
