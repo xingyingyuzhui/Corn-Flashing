@@ -25,10 +25,15 @@ class FlashPlannerTest {
         assertEquals(listOf(0x08000400L), FlashPlanner.plan(bin(0x400, 1), guarded, target).erasePageAddresses)
     }
 
-    @Test fun rejectsUnknownDeviceBogusCapacityAndWrongPageGeometry() {
+    @Test fun rejectsUnknownDeviceBogusCapacityAndLockedTemplate() {
         failsContaining("未知") { FlashPlanner.plan(bin(0, 1), profile, target.copy(deviceId = 0x999)) }
         failsContaining("容量异常") { FlashPlanner.plan(bin(0, 1), profile, target.copy(flashSizeBytes = 123)) }
-        failsContaining("页大小") { FlashPlanner.plan(bin(0, 1), profile.copy(pageSize = 2048), target) }
+        // Wrong template pageSize is overwritten by alignedTo; a locked expectedDeviceIds still rejects.
+        val locked = profile.copy(expectedDeviceIds = setOf(0x414))
+        failsContaining("不符合产品配置") { FlashPlanner.plan(bin(0, 1), locked, target) }
+        // Open template + wrong pageSize still plans: alignment fixes page size from the chip.
+        val plan = FlashPlanner.plan(bin(0, 1), profile.copy(pageSize = 2048), target)
+        assertEquals(1024, plan.profile.pageSize)
     }
 
     @Test fun acceptsProbed128kForMediumDensityAndPlansBeyond64k() {

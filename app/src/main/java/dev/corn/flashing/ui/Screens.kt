@@ -250,25 +250,30 @@ fun ConfigTab(vm: FlashViewModel) {
     val p = vm.profile
     val prefs = vm.prefs
     val probed = state.target
-    TopBar("产品配置", "容量以芯片报告为准") {
-        if (probed == null && !prefs.simulator) Chip("未探测", ChipTone.WARN) else if (prefs.simulator) SimMark()
+    TopBar("产品配置", "设备组与容量按探测自动匹配") {
+        when {
+            prefs.simulator -> SimMark()
+            probed != null -> Chip("已自动匹配", ChipTone.OK, dot = true)
+            else -> Chip("未探测", ChipTone.WARN)
+        }
     }
     ScrollBody {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val kib = (probed?.flashSizeBytes ?: p.flashSizeBytes) / 1024
-            Chip("F103 · ${kib} KB", ChipTone.WARN, dot = true)
+            Chip(p.name.take(22), ChipTone.WARN, dot = true)
             Chip("重新识别", onClick = {
-                if (prefs.simulator) vm.notify("模拟模式：容量来自演示板（64 KB）")
+                if (prefs.simulator) vm.notify("模拟模式：演示板固定 0x410 · 64 KB")
                 else vm.probeChip()
             })
         }
         CornCard {
-            Label("目标芯片")
-            KeyValue("芯片系列", probed?.family ?: "STM32F1 中容量（探测后确认）")
-            KeyValue("Flash 容量", "${(probed?.flashSizeBytes ?: p.flashSizeBytes) / 1024} KB" +
-                if (probed == null) " · 待探测" else " · 芯片报告", mono = true)
+            Label("目标芯片（自动匹配）")
+            KeyValue("设备组", probed?.let { "0x${it.deviceId.toString(16)} · ${it.family}" } ?: "探测后写入", mono = true)
+            KeyValue("Flash 容量", "${p.flashSizeBytes / 1024} KB" +
+                if (probed == null) " · 占位" else " · 芯片报告", mono = true)
             KeyValue("页大小", "${p.pageSize} B", mono = true)
             KeyValue("UID", probed?.uid ?: "—", mono = true, last = true)
+            T("开放配置：小/中/大/超大容量（0x412 / 0x410 / 0x414 / 0x430）均可；探测成功后自动对齐页大小与容量。",
+                CornColors.Dim, 12.sp, modifier = Modifier.padding(top = 8.dp))
             Row(Modifier.fillMaxWidth().padding(top = 7.dp), verticalAlignment = Alignment.CenterVertically) {
                 T("固件超出容量时", CornColors.Dim, 13.sp, modifier = Modifier.weight(1f)); Chip("拒绝烧录", ChipTone.BAD)
             }

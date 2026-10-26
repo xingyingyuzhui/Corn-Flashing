@@ -64,12 +64,13 @@ class FlashRepository(
     private val _state = MutableStateFlow(SessionState())
     val state = _state.asStateFlow()
     val history = dao.recentJobs()
-    /** Family template; capacity is filled from the last probed target when present. */
+    private val probePrefs = context.getSharedPreferences("probe", Context.MODE_PRIVATE)
+    /** Open F1 template, or the last probed chip alignment when available. */
     val profile: ProductProfile
         get() {
             val target = _state.value.target
-            return if (target != null) ProductProfiles.alignedTo(ProductProfiles.F103_MEDIUM, target)
-            else ProductProfiles.F103_MEDIUM
+            return if (target != null) ProductProfiles.alignedTo(ProductProfiles.F103_OPEN, target)
+            else ProductProfiles.F103_OPEN
         }
     private var pending: Pair<JobEntity, Pair<ImportedFirmware, JobRequest>>? = null
     private val _finished = MutableSharedFlow<JobEntity>(extraBufferCapacity = 16)
@@ -94,8 +95,17 @@ class FlashRepository(
                         ImportedFirmware(saved.name, image)
                     }
                 }
-                _state.update { it.copy(ready = true, firmware = restored,
-                    stage = if (restored == null) "等待固件" else "固件已就绪") }
+                val probed = withContext(Dispatchers.IO) { loadProbedTarget() }
+                _state.update { it.copy(
+                    ready = true,
+                    firmware = restored,
+                    target = probed,
+                    stage = if (restored == null) "等待固件" else "固件已就绪",
+                    message = probed?.let {
+                        "已恢复上次探测：${it.family} · ${it.flashSizeBytes / 1024} KB"
+                    } ?: if (restored == null) "导入文件或加载演示固件，开始验证工作流程"
+                        else "文件解析成功；执行时将检查目标与擦除范围",
+                ) }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 _state.update { it.copy(ready = true, importError = "恢复失败：${error.message}；请重新导入固件") }
@@ -125,7 +135,7 @@ class FlashRepository(
         try {
             val imported = withContext(Dispatchers.IO) { load() }
             _state.update { it.copy(firmware = imported, stage = "固件已就绪", progress = 0f, flashStage = null,
-                target = null, plan = null, job = null, message = "文件解析成功；执行时将检查目标与擦除范围") }
+                plan = null, job = null, message = "文件解析成功；执行时将按探测到的容量检查擦除范围") }
         } catch (error: Exception) {
             if (error is CancellationException) throw error
             _state.update { it.copy(importError = error.message ?: error.javaClass.simpleName) }
@@ -231,7 +241,8 @@ class FlashRepository(
                     ?: error("未找到已授权的 ST-LINK，请在设备页授权后再试")
             }
             val target = backend.probe()
-            val plan = FlashPlanner.plan(firmware.image, ProductProfiles.F103_MEDIUM, target)
+            if (!backend.isSimulation) saveProbedTarget(target)
+            val plan = FlashPlanner.plan(firmware.image, ProductProfiles.F103_OPEN, target)
             record = record.copy(targetUid = target.uid, mode = if (backend.isSimulation) "DEMO" else "STLINK")
             _state.update { it.copy(target = target, plan = plan) }
             backend.execute(plan) { event ->
@@ -270,14 +281,41 @@ class FlashRepository(
     suspend fun probeChip(): TargetInfo = withContext(Dispatchers.IO) {
         val backend = realBackend.open() ?: error("未找到已授权的 ST-LINK")
         val target = backend.probe()
+        saveProbedTarget(target)
         _state.update {
             it.copy(
                 target = target,
-                message = "已识别 ${target.family} · ${target.flashSizeBytes / 1024} KB" +
+                message = "已自动匹配 ${ProductProfiles.alignedTo(ProductProfiles.F103_OPEN, target).name}" +
                     (target.uid?.let { u -> " · $u" } ?: ""),
             )
         }
         target
+    }
+
+    private fun saveProbedTarget(target: TargetInfo) {
+        probePrefs.edit()
+            .putInt("deviceId", target.deviceId)
+            .putInt("revisionId", target.revisionId)
+            .putLong("flashSizeBytes", target.flashSizeBytes)
+            .putString("uid", target.uid)
+            .putString("family", target.family)
+            .apply()
+    }
+
+    private fun loadProbedTarget(): TargetInfo? {
+        if (!probePrefs.contains("deviceId") || !probePrefs.contains("flashSizeBytes")) return null
+        val deviceId = probePrefs.getInt("deviceId", 0)
+        val flash = probePrefs.getLong("flashSizeBytes", 0L)
+        val geo = ProductProfiles.geometryOf(deviceId) ?: return null
+        val kib = flash / 1024
+        if (flash <= 0L || flash % 1024L != 0L || kib !in geo.capacitiesKiB) return null
+        return TargetInfo(
+            deviceId = deviceId,
+            revisionId = probePrefs.getInt("revisionId", 0),
+            flashSizeBytes = flash,
+            uid = probePrefs.getString("uid", null),
+            family = probePrefs.getString("family", null) ?: ProductProfiles.familyName(deviceId),
+        )
     }
 
     suspend fun exportHistory(uri: Uri) = withContext(Dispatchers.IO) {
