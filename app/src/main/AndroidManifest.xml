@@ -1,0 +1,17 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <application android:name=".CornApplication" android:allowBackup="false" android:dataExtractionRules="@xml/data_extraction_rules"
+        android:label="Corn Flashing" android:icon="@drawable/ic_corn" android:supportsRtl="true"
+        android:theme="@style/Theme.CornFlashing">
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <service android:name=".service.FlashService" android:exported="false"
+            android:foregroundServiceType="shortService" />
+    </application>
+</manifest>

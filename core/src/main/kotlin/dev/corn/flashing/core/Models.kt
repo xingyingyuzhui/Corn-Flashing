@@ -1,0 +1,56 @@
+package dev.corn.flashing.core
+
+enum class FirmwareFormat { HEX, BIN, ELF, AXF }
+
+data class FirmwareSegment(val address: Long, val data: ByteArray) {
+    val endAddressExclusive: Long get() = address + data.size
+}
+
+/** Addresses are unsigned 32-bit values represented as Long; ends are exclusive. */
+data class AddressRange(val start: Long, val endExclusive: Long) {
+    init { require(start >= 0 && endExclusive > start && endExclusive <= 0x1_0000_0000L) }
+    fun overlaps(other: AddressRange): Boolean = start < other.endExclusive && other.start < endExclusive
+}
+
+data class FirmwareImage(
+    val format: FirmwareFormat,
+    val segments: List<FirmwareSegment>,
+    val sourceSha256: String,
+) {
+    val totalBytes: Long get() = segments.sumOf { it.data.size.toLong() }
+    val startAddress: Long get() = segments.minOf { it.address }
+    val endAddressExclusive: Long get() = segments.maxOf { it.endAddressExclusive }
+}
+
+data class ProductProfile(
+    val id: String = "f103-64k",
+    val name: String = "STM32F103 · 64 KB",
+    val flashStart: Long = 0x08000000L,
+    val flashSizeBytes: Long = 64L * 1024,
+    val pageSize: Int = 1024,
+    val reservedRanges: List<AddressRange> = emptyList(),
+    val expectedDeviceIds: Set<Int> = setOf(0x410),
+)
+
+data class TargetInfo(
+    val deviceId: Int,
+    val revisionId: Int,
+    val flashSizeBytes: Long,
+    val uid: String?,
+    val family: String,
+)
+
+data class FlashPlan(
+    val image: FirmwareImage,
+    val profile: ProductProfile,
+    val target: TargetInfo,
+    val erasePageAddresses: List<Long>,
+) {
+    val writeBytes: Long get() = image.totalBytes
+}
+
+enum class FlashStage { CONNECTING, PROBING, ERASING, WRITING, VERIFYING, RESETTING, SUCCEEDED }
+
+data class FlashProgress(val stage: FlashStage, val fraction: Float, val message: String)
+
+fun Long.hexAddress(): String = "0x" + toString(16).uppercase().padStart(8, '0')
