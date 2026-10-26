@@ -10,7 +10,10 @@ import dev.corn.flashing.MainActivity
 import dev.corn.flashing.R
 import kotlinx.coroutines.*
 
-/** Short user-started simulation only. Real USB sessions will use connectedDevice. */
+/**
+ * Runs one board per start, as a short service. A batch starts it again for each board, so no
+ * single start comes near the system's ~3 minute limit. Real USB sessions will use connectedDevice.
+ */
 class FlashService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var active: Job? = null
@@ -32,7 +35,7 @@ class FlashService : Service() {
         val cancel = PendingIntent.getService(this, 0, Intent(this, FlashService::class.java).setAction(ACTION_CANCEL), PendingIntent.FLAG_IMMUTABLE)
         val notification = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_corn)
-            .setContentTitle("Corn Flashing · 模拟任务")
+            .setContentTitle("Corn Flashing · 模拟烧录")
             .setContentText("正在演示烧录流程，不操作真实芯片")
             .setContentIntent(open).setOngoing(true)
             .addAction(Notification.Action.Builder(null, "取消", cancel).build()).build()
@@ -42,7 +45,7 @@ class FlashService : Service() {
             startForeground(1, notification)
         }
         active = scope.launch {
-            try { repository.runDemo(id) }
+            try { repository.runJob(id) }
             finally {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -50,6 +53,12 @@ class FlashService : Service() {
         }
         return START_NOT_STICKY
     }
+
+    /** shortService time limit reached (API 34). Stopping records the board as cancelled, never as succeeded. */
+    override fun onTimeout(startId: Int) { active?.cancel() }
+
+    /** Same limit, API 35+ signature. */
+    override fun onTimeout(startId: Int, fgsType: Int) { active?.cancel() }
 
     override fun onDestroy() { scope.cancel(); super.onDestroy() }
 
