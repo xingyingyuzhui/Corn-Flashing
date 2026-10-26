@@ -300,8 +300,12 @@ private fun Workbench(
             })
         CornCard(padding = 0.dp) {
             Column(Modifier.padding(horizontal = 14.dp)) {
-                SRow("自动换板", "检测到新目标板后自动开始") { CornToggle(vm.prefs.autoNextBoard) { vm.prefs.autoNextBoard = it } }
-                SRow("完成后复位运行", "烧录后让目标板直接跑起来", last = true) { CornToggle(vm.prefs.resetAfter) { vm.prefs.resetAfter = it } }
+                SRow("自动换板", "偏好已保存；换板自动检测尚未接线，成功后请手动再烧") {
+                    CornToggle(vm.prefs.autoNextBoard) { vm.prefs.autoNextBoard = it }
+                }
+                SRow("完成后复位运行", "偏好已保存；真实擦写接入后才会复位目标", last = true) {
+                    CornToggle(vm.prefs.resetAfter) { vm.prefs.resetAfter = it }
+                }
             }
         }
         TodayCard(history)
@@ -611,11 +615,24 @@ private fun ColumnScope.SuccessScreen(vm: FlashViewModel, state: SessionState, l
         ResultHeader(Lucide.Check, CornColors.Leaf, CornColors.LeafContainer, "烧录成功",
             "#$seq · 用时 ${secs((job.finishedAt ?: job.startedAt) - job.startedAt)} · ${formatTime(job.finishedAt ?: job.startedAt)}")
         CornCard(padding = 14.dp) {
-            KeyValue("芯片", state.target?.let { "STM32F103 · ${it.flashSizeBytes / 1024} KB" } ?: "STM32F103")
+            val simJob = job.mode == "DEMO"
+            KeyValue(
+                "芯片",
+                state.target?.let { "${it.family} · ${it.flashSizeBytes / 1024} KB" }
+                    ?: if (simJob) "STM32F103 · 模拟" else "—",
+            )
             KeyValue("UID", shortUid(job.targetUid), mono = true)
             KeyValue("写入", fw?.let { "${kb(it.image.totalBytes)} · ${erasePages(it, vm.profile)} 页" } ?: "—", mono = true)
-            KeyValue("回读校验", "通过 · 模拟", valueColor = CornColors.Leaf)
-            KeyValue("复位", if (vm.prefs.resetAfter) "已运行 · 模拟" else "未复位", last = true)
+            KeyValue("回读校验", if (simJob) "通过 · 模拟" else "通过", valueColor = CornColors.Leaf)
+            KeyValue(
+                "复位",
+                when {
+                    !vm.prefs.resetAfter -> "未复位"
+                    simJob -> "已运行 · 模拟"
+                    else -> "已请求复位"
+                },
+            )
+            KeyValue("目标电压", voltageLabel(vm, state), mono = true, last = true)
         }
         if (showLog) LiveLog(log, expandedDefault = true)
         DashedNote {
@@ -623,7 +640,14 @@ private fun ColumnScope.SuccessScreen(vm: FlashViewModel, state: SessionState, l
                 Ico(Lucide.Repeat, CornColors.Corn, 16.dp)
                 T("等待下一块板…", CornColors.Corn, 14.sp, FontWeight.SemiBold)
             }
-            T(if (vm.prefs.autoNextBoard) "换上新板后自动开始（模拟：点「立即再烧一块」）" else "自动换板已关闭", CornColors.Dim, 11.5.sp)
+            T(
+                when {
+                    !vm.prefs.autoNextBoard -> "自动换板已关闭"
+                    job.mode == "DEMO" -> "模拟：点「立即再烧一块」继续（自动换板检测尚未接线）"
+                    else -> "自动换板检测尚未接线：请点「立即再烧一块」"
+                },
+                CornColors.Dim, 11.5.sp,
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.padding(top = 4.dp)) {
                 listOf(1f, .6f, .3f).forEach { Box(Modifier.size(6.dp).clip(CircleShape).background(CornColors.Corn.copy(alpha = it))) }
             }
@@ -635,7 +659,7 @@ private fun ColumnScope.SuccessScreen(vm: FlashViewModel, state: SessionState, l
     }
 }
 
-private val noTargetWords = listOf("电压", "未响应")
+private val noTargetWords = listOf("电压", "未响应", "DBGMCU", "进入 SWD")
 
 @Composable
 private fun ColumnScope.FailedScreen(vm: FlashViewModel, state: SessionState, log: RunLog, seq: Int, onBack: () -> Unit) {
@@ -644,28 +668,42 @@ private fun ColumnScope.FailedScreen(vm: FlashViewModel, state: SessionState, lo
     val noTarget = stage == FlashStage.PROBING || noTargetWords.any { job.message.contains(it) }
     var showLog by remember { mutableStateOf(false) }
     if (noTarget) {
-        NoTargetScreen(vm, job, onBack)
+        NoTargetScreen(vm, state, job, onBack)
         return
     }
+    val usbOrProbe = job.message.contains("ST-LINK") || stage in setOf(FlashStage.CONNECTING, FlashStage.PROBING)
     val addr = Regex("0x[0-9A-Fa-f]{8}").find(job.message)?.value
     val hex = Regex("0x[0-9A-Fa-f]{2}\\b").findAll(job.message).map { it.value }.toList()
     BackTop("烧录失败", "工位 1 · ${job.firmwareName}", onBack = onBack) { Chip("该板未通过", ChipTone.BAD, dot = true) }
     ScrollBody(Modifier.weight(1f)) {
         ResultHeader(Lucide.X, CornColors.Red, CornColors.RedContainer,
-            stage?.let { if (it == FlashStage.VERIFYING) "校验失败" else "${stageLabel(it)}失败" } ?: "烧录失败",
+            when {
+                usbOrProbe -> "连接 / 识别失败"
+                stage == FlashStage.VERIFYING -> "校验失败"
+                stage != null -> "${stageLabel(stage)}失败"
+                else -> "烧录失败"
+            },
             "#$seq · 停在「${stage?.let { stepLabel(it, null).trim() } ?: job.stage}」")
         CornCard {
-            KeyValue("出错地址", addr ?: "—", mono = true, valueColor = CornColors.Red)
-            KeyValue("期望", hex.getOrNull(0) ?: "—", mono = true)
-            KeyValue("实际", hex.getOrNull(1) ?: "—", mono = true, valueColor = CornColors.Red)
+            if (!usbOrProbe) {
+                KeyValue("出错地址", addr ?: "—", mono = true, valueColor = CornColors.Red)
+                KeyValue("期望", hex.getOrNull(0) ?: "—", mono = true)
+                KeyValue("实际", hex.getOrNull(1) ?: "—", mono = true, valueColor = CornColors.Red)
+            }
             KeyValue("已完成", stage?.let { s -> SIX_STEPS.takeWhile { it != s }.joinToString(" · ") { stageLabel(it) } } ?: "—")
-            KeyValue("目标电压", "3.30 V · 模拟", mono = true, last = true)
+            KeyValue("目标电压", voltageLabel(vm, state), mono = true, last = true)
         }
         CornCard(color = CornColors.RedContainer, border = CornColors.Red.copy(alpha = .25f), spacing = 4.dp) {
             T("可能原因", CornColors.Red, 13.5.sp, FontWeight.Bold)
-            T("· 这块板的 Flash 有坏页，写入后读回不一致", CornColors.Dim, 12.sp)
-            T("· SWD 线过长或接触不良，写入时数据出错", CornColors.Dim, 12.sp)
-            T("· 目标板供电不稳，擦写时电压跌落", CornColors.Dim, 12.sp)
+            if (usbOrProbe) {
+                T("· USB 未正确配置接口/端点，或 ST-LINK 被电脑端占用", CornColors.Dim, 12.sp)
+                T("· OTG 供电不稳；请拔插 ST-LINK 后重试", CornColors.Dim, 12.sp)
+                T("· 目标未上电或 SWD 未接好（若已过通信阶段）", CornColors.Dim, 12.sp)
+            } else {
+                T("· 这块板的 Flash 有坏页，写入后读回不一致", CornColors.Dim, 12.sp)
+                T("· SWD 线过长或接触不良，写入时数据出错", CornColors.Dim, 12.sp)
+                T("· 目标板供电不稳，擦写时电压跌落", CornColors.Dim, 12.sp)
+            }
         }
         CornCard(spacing = 4.dp) {
             T("建议", size = 13.5.sp, weight = FontWeight.Bold)
@@ -682,18 +720,20 @@ private fun ColumnScope.FailedScreen(vm: FlashViewModel, state: SessionState, lo
 
 /** Screen 19: target did not answer. */
 @Composable
-private fun ColumnScope.NoTargetScreen(vm: FlashViewModel, job: JobEntity, onBack: () -> Unit) {
+private fun ColumnScope.NoTargetScreen(vm: FlashViewModel, state: SessionState, job: JobEntity, onBack: () -> Unit) {
+    val sim = job.mode == "DEMO" || vm.prefs.simulator
+    val vLabel = voltageLabel(vm, state)
     BackTop("目标板没有响应", "工位 1 · ${job.firmwareName}", onBack = onBack) { Chip("目标未连接", ChipTone.BAD, dot = true) }
     ScrollBody(Modifier.weight(1f)) {
         Chain(
             ChainNode(Lucide.Phone, "Android", "OTG 可用", CornColors.Leaf),
-            ChainNode(Lucide.Usb, "ST-LINK/V2", "模拟器", CornColors.Leaf),
-            ChainNode(Lucide.Chip, "目标板", "0.00 V", CornColors.Red),
+            ChainNode(Lucide.Usb, "ST-LINK/V2", if (sim) "模拟器" else "已授权", CornColors.Leaf),
+            ChainNode(Lucide.Chip, "目标板", if (sim) "0.00 V" else vLabel, CornColors.Red),
         )
         Banner("目标板没有响应", "探针正常，但读不到目标电压，也连不上 SWD。（${job.message}）")
         CornCard(spacing = 0.dp) {
             Label("SWD 接线检查", Modifier.padding(bottom = 4.dp))
-            PinRow("3V3", "目标 VDD", "0.00 V", CornColors.Red)
+            PinRow("3V3", "目标 VDD", if (sim) "0.00 V" else vLabel, CornColors.Red)
             PinRow("SWDIO", "PA13", "—", CornColors.Dim)
             PinRow("SWCLK", "PA14", "—", CornColors.Dim)
             PinRow("GND", "GND", "共地", CornColors.Leaf, last = true)
@@ -702,13 +742,26 @@ private fun ColumnScope.NoTargetScreen(vm: FlashViewModel, job: JobEntity, onBac
         CornCard(padding = 12.dp) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Ico(Lucide.Refresh, CornColors.Corn, 16.dp)
-                T("点「复位后连接」再试一次（模拟器不会自动重试）", CornColors.Dim, 12.sp, modifier = Modifier.weight(1f))
+                T(
+                    if (sim) "点「复位后连接」再试一次（模拟器不会自动重试）"
+                    else "点「复位后连接」再试一次；仍失败请检查目标供电与 SWD 线",
+                    CornColors.Dim, 12.sp, modifier = Modifier.weight(1f),
+                )
             }
         }
     }
     Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        CornButton("降速重试 · 模拟", vm::startSingle, Modifier.weight(1f))
+        CornButton(if (sim) "降速重试 · 模拟" else "降速重试", vm::startSingle, Modifier.weight(1f))
         CornButton("复位后连接", vm::startSingle, Modifier.weight(1f), primary = true)
+    }
+}
+
+private fun voltageLabel(vm: FlashViewModel, state: SessionState): String {
+    val sim = state.job?.mode == "DEMO" || vm.prefs.simulator
+    return when {
+        sim -> "3.30 V · 模拟"
+        state.voltageMv > 0 -> "%.2f V".format(state.voltageMv / 1000.0)
+        else -> "—"
     }
 }
 

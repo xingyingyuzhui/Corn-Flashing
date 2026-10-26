@@ -281,7 +281,7 @@ fun ConfigTab(vm: FlashViewModel) {
         CornCard(spacing = 8.dp) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Label("保留区", Modifier.weight(1f))
-                Chip("＋ 添加", onClick = { vm.notify("模拟：添加保留区还没开放") })
+                Chip("＋ 添加 · 未开放")
             }
             if (p.reservedRanges.isEmpty()) {
                 Box(Modifier.fillMaxWidth().height(18.dp).clip(RoundedCornerShape(6.dp)).background(CornColors.Surface3))
@@ -296,9 +296,9 @@ fun ConfigTab(vm: FlashViewModel) {
             }
         }
         CornCard(spacing = 10.dp) {
-            Row { Label("擦除", Modifier.weight(1f)); T("模拟 · 仅显示", CornColors.Mute, 11.sp) }
+            Row { Label("擦除偏好", Modifier.weight(1f)); T("真实擦写后生效", CornColors.Mute, 11.sp) }
             Seg(listOf("只擦用到的页", "整片擦除"), prefs.eraseMode, { prefs.eraseMode = it })
-            Label("校验")
+            Label("校验（真实擦写接入后生效）")
             Seg(listOf("回读全部", "CRC32", "不校验"), prefs.verifyMode, { prefs.verifyMode = it })
             Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 T("SWD 速率", CornColors.Dim, 13.sp, modifier = Modifier.weight(1f))
@@ -413,7 +413,7 @@ private fun DeviceCard(d: UsbProbe, vm: FlashViewModel) {
                     },
                     Modifier.weight(1f), height = 40, icon = Lucide.Chip, enabled = canProbe,
                 )
-                CornButton("闪灯定位", { vm.notify("闪灯定位尚未接入") }, Modifier.weight(1f), height = 40, enabled = false)
+                CornButton("闪灯定位 · 未开放", {}, Modifier.weight(1f), height = 40, enabled = false)
             }
         }
     }
@@ -575,7 +575,7 @@ fun SettingsScreen(vm: FlashViewModel, onBack: () -> Unit, onExport: () -> Unit)
         ScrollBody {
             Label("烧录")
             Group {
-                SRow("同一 UID 重复烧录", "批次里遇到已烧过的板") { Chip("先提醒", ChipTone.WARN) }
+                SRow("同一 UID 重复烧录", "批次新建时可改；此处仅说明默认「先提醒」") { Chip("先提醒", ChipTone.WARN) }
                 SRow("成功提示音") { CornToggle(prefs.successTone) { prefs.successTone = it } }
                 SRow("失败时震动") { CornToggle(prefs.vibrateOnFail) { prefs.vibrateOnFail = it } }
                 SRow("保持屏幕常亮", "产线上不用反复解锁", last = true) { CornToggle(prefs.keepScreenOn) { prefs.keepScreenOn = it } }
@@ -588,7 +588,7 @@ fun SettingsScreen(vm: FlashViewModel, onBack: () -> Unit, onExport: () -> Unit)
             Group {
                 SRow("记录保留", "超出后最旧的先删除") { T("10 000 条", CornColors.Dim, 13.sp, mono = true) }
                 SRow("导出全部记录", "JSON，每块板一条", onClick = onExport) { Chev() }
-                SRow("备份配置与固件", "即将支持", last = true) { SimMark() }
+                SRow("备份配置与固件", "未开放", last = true) { Chip("未开放") }
             }
             Label("模式")
             Group {

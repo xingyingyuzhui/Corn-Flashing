@@ -49,7 +49,7 @@ fun BatchWorkbench(vm: FlashViewModel, state: SessionState, view: BatchView?, on
         Seg(listOf("单路", "批量"), 1, { onMode(it == 1) })
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Chip("单工位连续", ChipTone.WARN)
-            Chip("多工位并行", onClick = { vm.notify("多工位并行还没开放") })
+            Chip("多工位并行 · 未开放")
             Spacer(Modifier.weight(1f))
             view?.let { T(it.batch.workOrder, CornColors.Dim, 12.sp, mono = true) }
         }

@@ -28,6 +28,7 @@ Android 离线单片机烧录工具的基础框架。目标为 ST-LINK/V2 + STM3
 - Kotlin USB bulk 探测 ST-LINK/V2：进入 SWD，读 DBGMCU_IDCODE、Flash 容量（0x1FFFF7E0）、96-bit UID；规划按探测结果对齐产品配置（小/中/大/超大容量），不再锁死单一设备组。
 - 深色 App：主题与 SystemBarStyle 统一强制浅色状态栏 / 导航栏图标，避免系统浅色主题下看不清时间。
 - 设备页「识别芯片」走真实探测（与工作台相同），卡片展示自动匹配的芯片系列 / 容量 / UID。
+- ST-LINK USB：打开设备后先 setConfiguration 再 claimInterface；按 PID 选择 bulk 端点；写失败重试 / UsbRequest 回退；失败页不再误显示「3.30 V · 模拟」。
 - 模拟完成单独标记，不能被当作真实校验通过或真实板卡成功数量。
 
 ## 尚未实现
