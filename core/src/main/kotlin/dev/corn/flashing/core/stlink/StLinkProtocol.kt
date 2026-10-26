@@ -38,9 +38,9 @@ object StLinkProtocol {
     const val DEBUG_APIV2_INIT_AP = 0x4B
     const val DEBUG_ENTER_SWD = 0xA3
 
-    const val MODE_DFU = 1
-    const val MODE_MASS = 2
-    const val MODE_DEBUG = 3
+    const val MODE_DFU = 0
+    const val MODE_MASS = 1
+    const val MODE_DEBUG = 2
 
     /** First byte of many V2 debug replies when OK. */
     const val STATUS_OK = 0x80

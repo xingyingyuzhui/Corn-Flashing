@@ -15,6 +15,7 @@ import dev.corn.flashing.core.stlink.StLinkProtocol
 import dev.corn.flashing.core.stlink.StLinkUsbLayout
 import dev.corn.flashing.core.stlink.StLinkVersion
 import dev.corn.flashing.core.stlink.StLinkBulkTransfers
+import android.util.Log
 import android.os.Build
 import dev.corn.flashing.core.stlink.UsbKernelErrors
 import java.io.Closeable
@@ -45,6 +46,7 @@ class StLinkUsbSession private constructor(
             "GET_VERSION 应答异常：${raw.joinToString(" ") { "%02X".format(it.toInt() and 255) }}"
         }
         version = parsed
+        Log.i("CornUsb", "GET_VERSION V${parsed.stlink}J${parsed.jtag}S${parsed.swim}")
     }
 
     fun identify(): TargetInfo {
@@ -217,7 +219,12 @@ class StLinkUsbSession private constructor(
     private fun xfer(cmd: ByteArray, rxSize: Int): ByteArray {
         try {
             transfers.command(cmd)
-            return if (rxSize <= 0) ByteArray(0) else transfers.response(rxSize)
+            return (if (rxSize <= 0) ByteArray(0) else transfers.response(rxSize)).also { reply ->
+                if (cmd[0].toInt() and 255 != StLinkProtocol.DEBUG_COMMAND ||
+                    cmd[1].toInt() and 255 in listOf(0x30, 0x31, 0x4B)) {
+                    Log.i("CornUsb", "CMD ${cmd.take(3).hexBytes()} RX ${reply.hexBytes()}")
+                }
+            }
         } catch (cancelled: java.util.concurrent.CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -228,11 +235,20 @@ class StLinkUsbSession private constructor(
                 else -> "STLINK_CMD"
             }
             val code = cmd.take(2).joinToString(" ") { "%02X".format(it.toInt() and 255) }
+            Log.e("CornUsb", "$name [$code] failed", error)
             throw IllegalStateException("$name [$code]：${error.message}", error)
         }
     }
 
-    private fun xferOut(cmd: ByteArray) = transfers.command(cmd)
+    private fun Iterable<Byte>.hexBytes() = joinToString(" ") { "%02X".format(it.toInt() and 255) }
+    private fun ByteArray.hexBytes() = asIterable().hexBytes()
+
+    private fun xferOut(cmd: ByteArray) {
+        if (cmd.contentEquals(StLinkProtocol.exitDebug()) || cmd.contentEquals(StLinkProtocol.exitDfu())) {
+            Log.i("CornUsb", "OUT ${cmd.take(3).hexBytes()}")
+        }
+        transfers.command(cmd)
+    }
 
     override fun close() {
         // Releasing an unopened/broken transport must never send another ST-LINK command.

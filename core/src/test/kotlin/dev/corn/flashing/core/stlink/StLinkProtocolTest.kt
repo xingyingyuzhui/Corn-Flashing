@@ -17,6 +17,12 @@ class StLinkProtocolTest {
         assertEquals(0.toByte(), cmd[7])
     }
 
+    @Test fun recognizesWireModeValues() {
+        assertEquals(StLinkProtocol.MODE_DFU, StLinkProtocol.parseMode(byteArrayOf(0, 0)))
+        assertEquals(StLinkProtocol.MODE_MASS, StLinkProtocol.parseMode(byteArrayOf(1, 0)))
+        assertEquals(StLinkProtocol.MODE_DEBUG, StLinkProtocol.parseMode(byteArrayOf(2, 0)))
+    }
+
     @Test fun packsEnterSwd() {
         assertArrayEquals(StLinkProtocol.cmd(0xF2, 0x30, 0xA3), StLinkProtocol.enterSwd())
     }
