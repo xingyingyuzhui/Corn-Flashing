@@ -23,6 +23,7 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     val usbMessage = app.usb.message
     val hostSupported = app.usb.hostSupported
     val profile = repository.profile
+    val prefs = Prefs(application)
     val batch = batches.active
     val resumeOffer = batches.resumeOffer
     val batchList = batches.batches
@@ -49,9 +50,26 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     fun startSingle() {
         if (!batchGuard()) return
         viewModelScope.launch {
-            val id = repository.prepareJob() ?: return@launch
+            val id = repository.prepareJob(singleRequest()) ?: return@launch
             if (!app.launcher.start(id)) repository.startFailed("系统拒绝启动任务服务")
         }
+    }
+
+    private var singleCounter = 0L
+
+    /** Single runs use the default demo board; with fault injection on, some boards fail like in a batch. */
+    private fun singleRequest(): dev.corn.flashing.storage.JobRequest {
+        singleCounter++
+        val target = dev.corn.flashing.core.DemoFlashBackend.DEFAULT_TARGET.copy(
+            uid = "DEMO-%08X".format(0x35FF_D605L + singleCounter * 0x10F))
+        val roll = kotlin.random.Random.nextInt(10)
+        val failure = when {
+            !prefs.injectFaults -> null
+            roll in 0..2 -> dev.corn.flashing.core.DemoFailure(dev.corn.flashing.core.FlashStage.VERIFYING, "模拟校验失败：0x08003C00 期望 0x4A，读回 0xFF")
+            roll == 3 -> dev.corn.flashing.core.DemoFailure(dev.corn.flashing.core.FlashStage.PROBING, "模拟目标未响应：目标电压 0.00 V")
+            else -> null
+        }
+        return dev.corn.flashing.storage.JobRequest(dev.corn.flashing.core.SimulatedBoards.Board(target, failure))
     }
 
     fun cancel() {

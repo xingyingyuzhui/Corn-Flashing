@@ -2,6 +2,7 @@
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <application android:name=".CornApplication" android:allowBackup="false" android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="Corn Flashing" android:icon="@drawable/ic_corn" android:supportsRtl="true"
         android:theme="@style/Theme.CornFlashing">

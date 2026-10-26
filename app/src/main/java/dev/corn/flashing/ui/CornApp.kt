@@ -4,43 +4,67 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.corn.flashing.core.FlashStage
+import dev.corn.flashing.core.ProductProfile
 import dev.corn.flashing.core.hexAddress
+import dev.corn.flashing.core.regions
 import dev.corn.flashing.storage.ImportedFirmware
 import dev.corn.flashing.storage.JobEntity
 import dev.corn.flashing.storage.SessionState
 import dev.corn.flashing.usb.UsbProbe
+import java.util.Calendar
+
+/** Overlay pages pushed above the tabs. */
+enum class Page { NONE, SETTINGS, FIRMWARE_DETAIL, NEW_BATCH, FLOW }
+
+/** Per-job UI log + stage timings for screens 02/03/20. */
+class RunLog {
+    var jobId by mutableStateOf<String?>(null)
+    val lines = mutableStateListOf<String>()
+    val stageStart = mutableStateMapOf<FlashStage, Long>()
+    var startedAt by mutableLongStateOf(0L)
+    var endedAt by mutableLongStateOf(0L)
+}
 
 @Composable
 fun CornApp(vm: FlashViewModel) {
     val state by vm.session.collectAsStateWithLifecycle()
     val history by vm.history.collectAsStateWithLifecycle(initialValue = emptyList())
     val devices by vm.devices.collectAsStateWithLifecycle()
-    val usbMessage by vm.usbMessage.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val batch by vm.batch.collectAsStateWithLifecycle()
     val offer by vm.resumeOffer.collectAsStateWithLifecycle()
     val report by vm.report.collectAsStateWithLifecycle()
-    val batchList by vm.batchList.collectAsStateWithLifecycle(initialValue = emptyList())
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    var page by rememberSaveable { mutableStateOf(Page.NONE) }
     var batchMode by rememberSaveable { mutableStateOf(false) }
     var binAddress by rememberSaveable { mutableStateOf("08000000") }
     val snackbar = remember { SnackbarHostState() }
+    val log = remember { RunLog() }
+    val prefs = vm.prefs
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.import(uri, binAddress)
     }
@@ -49,53 +73,68 @@ fun CornApp(vm: FlashViewModel) {
     }
     LaunchedEffect(notice) { notice?.let { snackbar.showSnackbar(it); vm.clearNotice() } }
     LaunchedEffect(batch != null) { if (batch != null) batchMode = true }
+    // Keep a readable log of the current job (screen 02 實時日志).
+    LaunchedEffect(state.job?.id, state.flashStage, state.message, state.running) {
+        val job = state.job ?: return@LaunchedEffect
+        val now = System.currentTimeMillis()
+        if (log.jobId != job.id) {
+            log.jobId = job.id; log.lines.clear(); log.stageStart.clear(); log.startedAt = now; log.endedAt = 0L
+        }
+        state.flashStage?.let { if (it !in log.stageStart) log.stageStart[it] = now }
+        val line = "${formatTime(now)}  ${state.message}"
+        if (log.lines.lastOrNull()?.substringAfter("  ") != state.message) log.lines.add(line)
+        if (!state.running && log.endedAt == 0L && job.finishedAt != null) log.endedAt = now
+    }
+    val view = LocalView.current
+    DisposableEffect(prefs.keepScreenOn) { view.keepScreenOn = prefs.keepScreenOn; onDispose { } }
+    FinishFeedback(vm, state)
 
     CornTheme {
-        val reportId = report
-        if (reportId != null) {
-            BackHandler { vm.openReport(null) }
-            BatchReportScreen(vm, reportId, onBack = { vm.openReport(null) })
-            return@CornTheme
-        }
-        Scaffold(
-            containerColor = CornColors.Background,
-            snackbarHost = { SnackbarHost(snackbar) },
-            bottomBar = {
-                NavigationBar(containerColor = CornColors.NavBackground) {
-                    listOf("⚡" to "工作台", "▤" to "固件", "⌁" to "设备", "≡" to "记录").forEachIndexed { index, (icon, label) ->
-                        NavigationBarItem(selected = tab == index, onClick = { tab = index },
-                            icon = { Glyph(icon, if (tab == index) CornColors.Corn else CornColors.Dim, 16) },
-                            label = { Text(label) })
-                    }
+        val sim = prefs.simulator
+        Box(Modifier.fillMaxSize().background(CornColors.Background)) {
+            val reportId = report
+            when {
+                reportId != null -> {
+                    BackHandler { vm.openReport(null) }
+                    BatchReportScreen(vm, reportId, onBack = { vm.openReport(null) })
                 }
-            },
-        ) { padding ->
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
-                LazyColumn(
-                    modifier = Modifier.widthIn(max = 720.dp).fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    item { Header(tab, batch != null) }
-                    when (tab) {
-                        0 -> {
-                            item {
-                                ModeSwitch(batchMode, onChange = { wanted ->
-                                    if (!wanted && batch != null) vm.notify("批次未结束：结束批次后才能切回单路")
-                                    else batchMode = wanted
-                                })
-                            }
-                            if (batchMode) batchItems(vm, state, batch, onGoFirmware = { tab = 1 })
-                            else singleItems(vm, state, devices, onGoDevices = { tab = 2 }, onGoFirmware = { tab = 1 })
+                page == Page.FLOW && batch == null -> {
+                    BackHandler(enabled = !state.running) { page = Page.NONE }
+                    FlowScreen(vm, state, log, history, onBack = { if (!state.running) page = Page.NONE })
+                }
+                page == Page.SETTINGS -> {
+                    BackHandler { page = Page.NONE }
+                    SettingsScreen(vm, onBack = { page = Page.NONE }, onExport = { exporter.launch("corn-flashing-records.json") })
+                }
+                page == Page.FIRMWARE_DETAIL && state.firmware != null -> {
+                    BackHandler { page = Page.NONE }
+                    FirmwareDetailScreen(state.firmware!!, vm.profile, onBack = { page = Page.NONE })
+                }
+                page == Page.NEW_BATCH && batch == null -> {
+                    BackHandler { page = Page.NONE }
+                    NewBatchScreen(vm, state, devices, onBack = { page = Page.NONE },
+                        onGoFirmware = { page = Page.NONE; tab = 1 }, onStarted = { page = Page.NONE; tab = 0; batchMode = true })
+                }
+                else -> Scaffold(
+                    containerColor = CornColors.Background,
+                    snackbarHost = { SnackbarHost(snackbar) },
+                    bottomBar = { BottomNav(tab) { tab = it } },
+                ) { padding ->
+                    Column(Modifier.fillMaxSize().padding(padding).statusBarsPadding()) {
+                        when (tab) {
+                            0 -> Workbench(vm, state, history, devices, batchMode, sim,
+                                onMode = { wanted ->
+                                    if (!wanted && batch != null) vm.notify("批次未结束：结束批次后才能切回单路") else batchMode = wanted
+                                },
+                                onSettings = { page = Page.SETTINGS }, onGoFirmware = { tab = 1 },
+                                onStart = { vm.startSingle(); page = Page.FLOW },
+                                onNewBatch = { page = Page.NEW_BATCH })
+                            1 -> FirmwareTab(vm, state, binAddress, { binAddress = it },
+                                onPick = { picker.launch(arrayOf("*/*")) }, onDetail = { page = Page.FIRMWARE_DETAIL })
+                            2 -> ConfigTab(vm)
+                            3 -> DevicesTab(vm, devices)
+                            4 -> RecordsTab(vm, history, onExport = { exporter.launch("corn-flashing-records.json") })
                         }
-                        1 -> firmwareItems(vm, state, binAddress, { binAddress = it }, onPick = { picker.launch(arrayOf("*/*")) })
-                        2 -> deviceItems(vm, devices, usbMessage)
-                        3 -> recordItems(history, batchList, onExport = { exporter.launch("corn-flashing-records.json") },
-                            onReport = vm::openReport)
-                    }
-                    item {
-                        Text("Corn Flashing · by xingyingyuzhui · 模拟模式", color = CornColors.Mute, fontSize = 11.sp,
-                            modifier = Modifier.padding(vertical = 8.dp))
                     }
                 }
             }
@@ -104,300 +143,544 @@ fun CornApp(vm: FlashViewModel) {
     }
 }
 
+/** Tone on success, vibration on failure (settings 10). */
 @Composable
-private fun Header(tab: Int, batchOpen: Boolean) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        RoundIcon("◆", CornColors.CornOn, CornColors.Corn, size = 38, glyphSize = 16)
-        Column(Modifier.weight(1f)) {
-            Text(listOf("Corn Flashing", "固件库", "设备", "记录")[tab], color = CornColors.Text,
-                fontWeight = FontWeight.Bold, fontSize = 20.sp)
-            Text(listOf("离线烧录 · 全程留痕", "先检查，再烧录", "从 USB 授权开始", "每块板都有结果")[tab],
-                color = CornColors.Dim, fontSize = 12.sp)
+private fun FinishFeedback(vm: FlashViewModel, state: SessionState) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var lastId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(state.job?.id, state.running) {
+        val job = state.job ?: return@LaunchedEffect
+        if (state.running || job.finishedAt == null || job.id == lastId) return@LaunchedEffect
+        if (lastId == null) { lastId = job.id; return@LaunchedEffect } // do not beep for a restored job
+        lastId = job.id
+        if (job.status in listOf("SIMULATED", "SUCCEEDED") && vm.prefs.successTone) runCatching {
+            android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 80)
+                .startTone(android.media.ToneGenerator.TONE_PROP_ACK, 200)
         }
-        if (batchOpen) Chip("批次进行中", ChipTone.WARN, dot = true) else Chip("模拟", ChipTone.INFO, dot = true)
-    }
-}
-
-/** Phone → ST-LINK → chip chain (screens 01/17). In simulation the chain is always bypassed. */
-@Composable
-private fun LinkChain(probeReady: Boolean, targetReady: Boolean) {
-    CornCard {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Chip("手机", ChipTone.OK, dot = true)
-            Text("—", color = CornColors.Mute)
-            Chip("ST-LINK", if (probeReady) ChipTone.OK else ChipTone.BAD, dot = true)
-            Text("—", color = CornColors.Mute)
-            Chip("目标板", if (targetReady) ChipTone.OK else ChipTone.BAD, dot = true)
+        if (job.status == "FAILED" && vm.prefs.vibrateOnFail) runCatching {
+            val vibrator = context.getSystemService(android.os.Vibrator::class.java)
+            vibrator?.vibrate(android.os.VibrationEffect.createOneShot(300, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
         }
     }
 }
 
-// ---------------------------------------------------------------- single mode
+// ---------------------------------------------------------------- nav
 
-private fun LazyListScope.singleItems(
-    vm: FlashViewModel, state: SessionState, devices: List<UsbProbe>,
-    onGoDevices: () -> Unit, onGoFirmware: () -> Unit,
+@Composable
+private fun BottomNav(tab: Int, onTab: (Int) -> Unit) {
+    val items = listOf(Lucide.Bolt to "工作台", Lucide.File to "固件", Lucide.Sliders to "配置", Lucide.Usb to "设备", Lucide.List to "记录")
+    Column(Modifier.fillMaxWidth().background(CornColors.NavBackground).navigationBarsPadding()) {
+        DividerLine()
+        Row(Modifier.fillMaxWidth().height(76.dp).padding(top = 8.dp, bottom = 14.dp)) {
+            items.forEachIndexed { index, (icon, label) ->
+                val active = index == tab
+                Column(Modifier.weight(1f).fillMaxHeight().clickable { onTab(index) },
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)) {
+                    Box(Modifier.size(52.dp, 28.dp).clip(RoundedCornerShape(99.dp))
+                        .background(if (active) CornColors.CornContainer else Color.Transparent), contentAlignment = Alignment.Center) {
+                        Ico(icon, if (active) CornColors.Corn else CornColors.Mute, 20.dp)
+                    }
+                    T(label, if (active) CornColors.Text else CornColors.Mute, 11.sp, if (active) FontWeight.SemiBold else FontWeight.Medium)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ScrollBody(modifier: Modifier = Modifier, spacing: Int = 12, content: @Composable ColumnScope.() -> Unit) {
+    Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(spacing.dp), content = content)
+}
+
+// ---------------------------------------------------------------- workbench (01 / 17 / 13)
+
+@Composable
+private fun Workbench(
+    vm: FlashViewModel, state: SessionState, history: List<JobEntity>, devices: List<UsbProbe>,
+    batchMode: Boolean, sim: Boolean, onMode: (Boolean) -> Unit, onSettings: () -> Unit, onGoFirmware: () -> Unit,
+    onStart: () -> Unit, onNewBatch: () -> Unit,
 ) {
+    val batch by vm.batch.collectAsStateWithLifecycle()
     val probe = devices.firstOrNull { it.candidate }
-    val authorized = probe?.permissionGranted == true
-    item { LinkChain(authorized, false) }
-    if (!authorized) item { NoProbeCard(probe, devices.isNotEmpty(), vm, onGoDevices) }
-    item { FirmwareCard(state.firmware, onGoFirmware, vm) }
-    item { SingleRunCard(vm, state) }
+    val probeOk = sim || probe?.permissionGranted == true
+    if (batchMode) {
+        BatchWorkbench(vm, state, batch, onMode, onSettings, onNewBatch)
+        return
+    }
+    TopBar("Corn Flashing", "离线烧录 · STM32F103") {
+        if (probeOk) Chip("工位 1", ChipTone.OK, dot = true) else Chip("未就绪", ChipTone.BAD, dot = true)
+        IconBtn(Lucide.Gear, onSettings)
+    }
+    ScrollBody {
+        Seg(listOf("单路", "批量"), 0, { onMode(it == 1) })
+        Chain(
+            ChainNode(Lucide.Phone, "Android", if (vm.hostSupported) (if (probe?.permissionGranted == true) "OTG 已授权" else "OTG 可用") else "无 USB Host",
+                if (vm.hostSupported) CornColors.Leaf else CornColors.Red),
+            ChainNode(Lucide.Usb, "ST-LINK/V2", when { sim -> "模拟器"; probe == null -> "未连接"; probe.permissionGranted -> probe.serial?.take(8) ?: "已授权"; else -> "待授权" },
+                if (probeOk) CornColors.Leaf else if (probe != null) CornColors.Corn else CornColors.Red),
+            ChainNode(Lucide.Chip, if (sim) "F103C8" else "目标板", if (sim) "3.30 V · 模拟" else "—",
+                if (sim) CornColors.Leaf else CornColors.Red),
+        )
+        if (!probeOk) {
+            NoProbeCard(probe, devices.isNotEmpty(), vm)
+            CornButton("开始烧录", {}, Modifier.fillMaxWidth(), enabled = false, height = 64, radius = 20, icon = Lucide.Bolt,
+                subtitle = if (probe != null && probe.permissionGranted) "真实烧录尚未接入" else "先接上 ST-LINK")
+            T("没有硬件？用模拟烧录器演练流程", CornColors.Corn, 13.sp, FontWeight.SemiBold, align = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().clickable { vm.prefs.simulator = true }.padding(8.dp))
+            return@ScrollBody
+        }
+        FirmwareCard(state.firmware, vm.profile, onGoFirmware, vm)
+        val firmware = state.firmware
+        val pages = firmware?.let { erasePages(it, vm.profile) }
+        CornButton("开始烧录", onStart, Modifier.fillMaxWidth(), primary = true, height = 64, radius = 20, icon = Lucide.Bolt,
+            enabled = state.ready && !state.importing && firmware != null && !state.running,
+            subtitle = if (firmware == null) "先选择固件" else "擦除 $pages 页 · 写入 ${kb(firmware.image.totalBytes)} · 回读校验")
+        CornCard(padding = 0.dp) {
+            Column(Modifier.padding(horizontal = 14.dp)) {
+                SRow("自动换板", "检测到新目标板后自动开始") { CornToggle(vm.prefs.autoNextBoard) { vm.prefs.autoNextBoard = it } }
+                SRow("完成后复位运行", "烧录后让目标板直接跑起来", last = true) { CornToggle(vm.prefs.resetAfter) { vm.prefs.resetAfter = it } }
+            }
+        }
+        TodayCard(history)
+    }
+}
+
+data class ChainNode(val icon: ImageVector, val name: String, val status: String, val color: Color)
+
+/** Phone › ST-LINK › chip chain card (01 / 17 / 19). */
+@Composable
+fun Chain(vararg nodes: ChainNode) {
+    CornCard(padding = 12.dp) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            nodes.forEachIndexed { index, node ->
+                if (index > 0) Ico(Lucide.Chev, CornColors.Mute, 14.dp, Modifier.padding(horizontal = 2.dp))
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Box(Modifier.size(28.dp).clip(RoundedCornerShape(9.dp)).background(CornColors.Surface2), contentAlignment = Alignment.Center) {
+                        Ico(node.icon, node.color, 15.dp)
+                    }
+                    Column {
+                        T(node.name, size = 11.5.sp, weight = FontWeight.SemiBold, maxLines = 1)
+                        T(node.status, node.color, 10.5.sp, mono = true, maxLines = 1)
+                    }
+                }
+            }
+        }
+    }
+}
+
+fun erasePages(firmware: ImportedFirmware, profile: ProductProfile): Int =
+    firmware.image.segments.flatMap { s ->
+        val first = (s.address - profile.flashStart) / profile.pageSize
+        val last = (s.endAddressExclusive - 1 - profile.flashStart) / profile.pageSize
+        (first..last).toList()
+    }.toSet().size
+
+@Composable
+private fun FirmwareCard(firmware: ImportedFirmware?, profile: ProductProfile, onGoFirmware: () -> Unit, vm: FlashViewModel) {
+    CornCard(spacing = 8.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Label("当前固件", Modifier.weight(1f))
+            Chip(if (firmware == null) "选择 ›" else "更换 ›", onClick = onGoFirmware)
+        }
+        if (firmware == null) {
+            T("还没有选择固件", size = 17.sp, weight = FontWeight.Bold)
+            T("先用演示 HEX 试一下", CornColors.Corn, 13.sp, FontWeight.SemiBold, modifier = Modifier.clickable { vm.loadDemo() })
+            return@CornCard
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FormatBadge(firmware.image.format.name)
+            T(firmware.name, size = 17.sp, weight = FontWeight.Bold, maxLines = 1)
+        }
+        T("SHA ${shortSha(firmware.image.sourceSha256)} · ${kb(firmware.image.totalBytes)} · ${firmware.image.regions().size} 段",
+            CornColors.Dim, 11.5.sp, mono = true)
+        MemMap(firmware, profile)
+    }
+}
+
+/** 26dp flash usage bar with address scale and legend. */
+@Composable
+fun MemMap(firmware: ImportedFirmware, profile: ProductProfile) {
+    val total = profile.flashSizeBytes.toFloat()
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        BoxWithConstraints(Modifier.fillMaxWidth().height(26.dp).clip(RoundedCornerShape(8.dp)).background(CornColors.Surface3)) {
+            val w = maxWidth
+            profile.reservedRanges.forEach { r ->
+                Box(Modifier.offset(x = w * ((r.start - profile.flashStart) / total)).width(w * ((r.endExclusive - r.start) / total)).fillMaxHeight().hatch())
+            }
+            firmware.image.regions().forEach { r ->
+                Box(Modifier.offset(x = w * ((r.start - profile.flashStart) / total)).width(w * ((r.endExclusive - r.start) / total))
+                    .fillMaxHeight().background(CornColors.Corn))
+            }
+        }
+        Row(Modifier.fillMaxWidth()) {
+            T(profile.flashStart.hexAddress(), CornColors.Mute, 10.sp, mono = true)
+            Spacer(Modifier.weight(1f))
+            T("F103 · ${profile.flashSizeBytes / 1024} KB", CornColors.Mute, 10.sp, mono = true)
+            Spacer(Modifier.weight(1f))
+            T((profile.flashStart + profile.flashSizeBytes - 1).hexAddress(), CornColors.Mute, 10.sp, mono = true)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            LegendDot(CornColors.Corn, "写入")
+            LegendDot(CornColors.Red, "保留区（不擦写）", hatch = true)
+        }
+    }
+}
+
+fun isToday(millis: Long): Boolean {
+    val a = Calendar.getInstance().apply { timeInMillis = millis }
+    val b = Calendar.getInstance()
+    return a.get(Calendar.YEAR) == b.get(Calendar.YEAR) && a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR)
+}
+
+@Composable
+private fun TodayCard(history: List<JobEntity>) {
+    val today = history.filter { isToday(it.startedAt) }
+    val ok = today.filter { it.status in listOf("SIMULATED", "SUCCEEDED") }
+    val bad = today.count { it.status == "FAILED" }
+    val avg = ok.mapNotNull { r -> r.finishedAt?.let { it - r.startedAt } }.takeIf { it.isNotEmpty() }?.average()?.toLong()
+    CornCard(spacing = 10.dp) {
+        Label("今日 · 工位 1")
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            StatCell("${ok.size}", "成功", CornColors.Leaf, modifier = Modifier.weight(1f))
+            VDivider()
+            StatCell("$bad", "失败", CornColors.Red, modifier = Modifier.weight(1f))
+            VDivider()
+            StatCell(percent((ok.size + bad).takeIf { it > 0 }?.let { ok.size.toFloat() / it }), "良率", modifier = Modifier.weight(1f))
+            VDivider()
+            StatCell(avg?.let { "%.1f".format(it / 1000f) + "s" } ?: "—", "平均", modifier = Modifier.weight(1f))
+        }
+    }
 }
 
 /** Screen 17: no probe. */
 @Composable
-private fun NoProbeCard(probe: UsbProbe?, anyUsb: Boolean, vm: FlashViewModel, onGoDevices: () -> Unit) {
-    CornCard {
-        Label("没有可用的烧录器")
-        Text("先接上 ST-LINK", color = CornColors.Text, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-        HintRow("1", "插上 OTG 转接头", "手机 Type-C → USB-A 母口", done = anyUsb)
-        HintRow("2", "接上 ST-LINK/V2", "接好后列表自动更新", done = probe != null)
-        HintRow("3", "允许 USB 访问", "系统会弹出授权窗口", done = probe?.permissionGranted == true)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (probe != null && !probe.permissionGranted) {
-                CornButton("授权", { vm.authorize(probe.connectionId) }, Modifier.weight(1f), primary = true, height = 44)
-            }
-            CornButton("排查连接", onGoDevices, Modifier.weight(1f), height = 44)
+private fun NoProbeCard(probe: UsbProbe?, anyUsb: Boolean, vm: FlashViewModel) {
+    CornCard(spacing = 6.dp) {
+        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Illo(Lucide.Usb, CornColors.Dim)
+            T("还没有连接烧录器", size = 17.sp, weight = FontWeight.Bold)
+            T("按顺序接好，接上后这里会自动更新", CornColors.Dim, 12.5.sp)
         }
-        Text("真实 ST-LINK 烧录尚未接入；下面可以用模拟烧录器演练流程。", color = CornColors.Dim, fontSize = 12.sp)
-    }
-}
-
-@Composable
-private fun FirmwareCard(firmware: ImportedFirmware?, onGoFirmware: () -> Unit, vm: FlashViewModel) {
-    CornCard {
-        Label("固件")
-        if (firmware == null) {
-            Text("尚未选择固件", color = CornColors.Text, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CornButton("去固件库", onGoFirmware, Modifier.weight(1f), height = 44)
-                CornButton("演示 HEX", vm::loadDemo, Modifier.weight(1f), height = 44)
-            }
-        } else {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Chip(firmware.image.format.toString(), ChipTone.WARN)
-                Text(firmware.name, color = CornColors.Text, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            }
-            KeyValue("大小", "${firmware.image.totalBytes} 字节", mono = true)
-            KeyValue("SHA-256", shortSha(firmware.image.sourceSha256), mono = true)
-            KeyValue("产品配置", vm.profile.name)
+        HintRow("1", "OTG 转接头插到手机", "Type-C → USB-A 母口", done = vm.hostSupported && (anyUsb || true))
+        HintRow("2", "接上 ST-LINK", "ST-LINK/V2 插到转接头上", done = probe != null)
+        HintRow("3", "允许 Corn Flashing 访问", "系统会弹出 USB 授权窗口", done = probe?.permissionGranted == true, last = true)
+        if (probe != null && !probe.permissionGranted) {
+            CornButton("授权", { vm.authorize(probe.connectionId) }, Modifier.fillMaxWidth(), primary = true, height = 44)
         }
     }
 }
 
-@Composable
-private fun SingleRunCard(vm: FlashViewModel, state: SessionState) {
-    val job = state.job
-    CornCard {
-        if (state.running) {
-            Label("烧录中 · 模拟")
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(state.stage, color = CornColors.Text, fontWeight = FontWeight.SemiBold)
-                Text("${(state.progress * 100).toInt()}%", color = CornColors.Corn, style = numericStyle)
-            }
-            CornBar(state.progress)
-            Text(state.message, color = CornColors.Dim, fontSize = 12.sp)
-            CornButton("中止", vm::cancel, danger = true, height = 44)
-            return@CornCard
-        }
-        when (job?.status) {
-            "SIMULATED", "SUCCEEDED" -> Banner("烧录成功（模拟）", "UID ${job.targetUid ?: "—"} · ${job.message}", bad = false, icon = "✓")
-            "FAILED" -> FailureDetail(job.message, state.failedStage)
-            "CANCELLED", "INTERRUPTED" -> UnpluggedCard(job)
-        }
-        CornButton(
-            "开始烧录（模拟）", vm::startSingle, primary = true,
-            enabled = state.ready && !state.importing && state.firmware != null,
-            subtitle = state.plan?.let { "擦 ${it.erasePageAddresses.size} 页 · 写 ${it.writeBytes} 字节 · 读回校验" }
-                ?: if (state.firmware == null) "先选择固件" else "模拟烧录器 · 不写入真实芯片",
-        )
-    }
-}
+// ---------------------------------------------------------------- single flow (02 / 03 / 04 / 19 / 20)
 
-/** Failure explanation; screen 19 when the target did not respond. */
-@Composable
-fun FailureDetail(message: String, stage: FlashStage?) {
-    val noTarget = stage == FlashStage.PROBING || message.contains("电压") || message.contains("未响应")
-    if (!noTarget) {
-        Banner("烧录失败${stage?.let { " · 停在${stageLabel(it)}" } ?: ""}", message)
-        return
-    }
-    Banner("目标板没响应", "$message。探针正常，但读不到目标电压。")
-    CornCard(color = CornColors.Surface2) {
-        Label("SWD 接线检查")
-        HintRow("1", "3V3 → 目标板 3.3V", "ST-LINK/V2 的 3V3 脚只检测电压，不给目标板供电")
-        HintRow("2", "SWDIO → PA13", "线尽量短，不超过 20 cm")
-        HintRow("3", "SWCLK → PA14", "接触不良时可降低 SWD 速率重试")
-        HintRow("4", "GND → GND", "必须共地")
-    }
-}
+val SIX_STEPS = listOf(FlashStage.CONNECTING, FlashStage.PROBING, FlashStage.ERASING, FlashStage.WRITING, FlashStage.VERIFYING, FlashStage.RESETTING)
 
-/** Screen 20: unplugged / aborted mid-flash. */
-@Composable
-fun UnpluggedCard(job: JobEntity) {
-    Banner("这块板现在不能用",
-        "烧录在「${job.stage}」中断：可能已经擦除，只写了一部分，程序不完整。接回后核对 UID，同一块板需要从头重烧。")
-}
-
-fun stageLabel(stage: FlashStage) = when (stage) {
-    FlashStage.CONNECTING -> "连接"
+fun stepLabel(stage: FlashStage, pages: Int?) = when (stage) {
+    FlashStage.CONNECTING -> "连接探针"
     FlashStage.PROBING -> "识别芯片"
-    FlashStage.ERASING -> "擦除"
+    FlashStage.ERASING -> "擦除 ${pages ?: ""} 页".replace("  ", " ")
     FlashStage.WRITING -> "写入"
-    FlashStage.VERIFYING -> "校验"
-    FlashStage.RESETTING -> "复位"
+    FlashStage.VERIFYING -> "回读校验"
+    FlashStage.RESETTING -> "复位运行"
     FlashStage.SUCCEEDED -> "完成"
 }
 
-// ---------------------------------------------------------------- firmware (23)
+fun stageLabel(stage: FlashStage) = stepLabel(stage, null).replace(" 页", "")
 
-private fun LazyListScope.firmwareItems(
-    vm: FlashViewModel, state: SessionState, binAddress: String, onAddress: (String) -> Unit, onPick: () -> Unit,
-) {
-    state.importError?.let { error -> item { ImportErrorCard(error, vm::clearImportError) } }
-    if (state.firmware == null) item {
-        DashedNote {
-            RoundIcon("▤", CornColors.Corn, CornColors.CornContainer, size = 56, glyphSize = 22)
-            Text("固件库是空的", color = CornColors.Text, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-            Text("支持 HEX、BIN（需填写起始地址）。ELF 解析待接入。", color = CornColors.Dim, fontSize = 12.5.sp)
-            CornButton(if (state.importing) "正在解析…" else "选择固件文件", onPick, primary = true,
-                enabled = state.ready && !state.importing)
-            CornButton("先用演示 HEX 试一下", vm::loadDemo, enabled = state.ready && !state.importing, height = 44)
-        }
-    } else {
-        item {
-            val firmware = state.firmware
-            CornCard {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Chip(firmware.image.format.toString(), ChipTone.WARN)
-                    Text(firmware.name, color = CornColors.Text, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Spacer(Modifier.weight(1f))
-                    Chip("使用中", ChipTone.OK, dot = true)
-                }
-                KeyValue("地址范围", "${firmware.image.startAddress.hexAddress()} – ${firmware.image.endAddressExclusive.hexAddress()}", mono = true)
-                KeyValue("区段", "${firmware.image.segments.size}", mono = true)
-                KeyValue("大小", "${firmware.image.totalBytes} 字节", mono = true)
-                KeyValue("SHA-256", shortSha(firmware.image.sourceSha256), mono = true)
-                CornButton(if (state.importing) "正在解析…" else "导入其他固件", onPick,
-                    enabled = state.ready && !state.importing && !state.running, height = 44)
-            }
-        }
-    }
-    item {
-        CornCard {
-            Label("BIN 起始地址")
-            OutlinedTextField(value = binAddress, onValueChange = onAddress, singleLine = true, prefix = { Text("0x") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii), modifier = Modifier.fillMaxWidth())
-            Text("常见值：0x08000000（无 Bootloader）、0x08004000 / 0x08008000（带 Bootloader）", color = CornColors.Dim, fontSize = 12.sp)
-        }
-    }
-    item {
-        CornCard {
-            Label("产品配置")
-            KeyValue("预设", vm.profile.name)
-            KeyValue("Flash", "${vm.profile.flashStart.hexAddress()} · ${vm.profile.flashSizeBytes / 1024} KB", mono = true)
-            KeyValue("擦除", "仅计划涉及的页")
-            KeyValue("读保护", "不修改")
-        }
-    }
-}
-
-/** Screen 23: turn a parser message into cause + next step. */
 @Composable
-private fun ImportErrorCard(error: String, onDismiss: () -> Unit) {
-    val (title, advice) = importErrorAdvice(error)
-    Banner(title, "$error\n$advice")
-    TextButton(onClick = onDismiss) { Text("知道了", color = CornColors.Corn) }
-}
-
-fun importErrorAdvice(error: String): Pair<String, String> = when {
-    error.contains("校验") -> "HEX 校验和错误" to "文件可能在传输时损坏，请重新从电脑拷贝。"
-    error.contains("BIN") || error.contains("起始地址") -> "BIN 需要起始地址" to "填写正确的起始地址后重新选择文件。"
-    error.contains("超出") || error.contains("范围") || error.contains("Flash") -> "超出 Flash 范围" to "可能选错了产品配置或起始地址。"
-    error.contains("ELF") -> "暂不支持 ELF" to "请在编译工具里同时导出 HEX 或 BIN。"
-    else -> "导入失败" to "请确认文件格式为 HEX 或 BIN。"
-}
-
-// ---------------------------------------------------------------- devices (18)
-
-private fun LazyListScope.deviceItems(vm: FlashViewModel, devices: List<UsbProbe>, usbMessage: String) {
-    item {
-        CornCard {
-            KeyValue("USB Host", if (vm.hostSupported) "✓ 系统支持" else "✗ 系统未声明支持",
-                valueColor = if (vm.hostSupported) CornColors.Leaf else CornColors.Red)
-            Text(usbMessage, color = CornColors.Dim, fontSize = 12.sp)
-            CornButton("刷新设备列表", vm::refreshUsb, height = 44)
+private fun FlowScreen(vm: FlashViewModel, state: SessionState, log: RunLog, history: List<JobEntity>, onBack: () -> Unit) {
+    val job = state.job
+    val fw = state.firmware
+    val seq = history.count { isToday(it.startedAt) && it.batchId == null }
+    Column(Modifier.fillMaxSize().systemBarsPadding()) {
+        when {
+            state.running || job == null || job.finishedAt == null -> RunningScreen(vm, state, log, seq, fw)
+            job.status in listOf("SIMULATED", "SUCCEEDED") -> SuccessScreen(vm, state, log, seq, onBack)
+            job.status == "FAILED" -> FailedScreen(vm, state, log, seq, onBack)
+            else -> AbortedScreen(vm, state, log, onBack)
         }
     }
-    if (devices.isEmpty()) item {
-        CornCard {
-            Label("插上了但没看到设备？")
-            Banner("先检查 OTG 开关", "很多手机默认关闭 OTG，部分机型 10 分钟无操作后会自动关闭。", bad = false)
-            HintRow("1", "系统支持 USB Host", if (vm.hostSupported) "已自动检测通过" else "本机不支持，无法连接烧录器", done = vm.hostSupported)
-            HintRow("2", "打开 OTG 开关", "设置 → 更多连接 → OTG")
-            HintRow("3", "换一根线", "只能充电的线没有数据线芯")
-            HintRow("4", "供电是否足够", "多个设备时用带供电的 USB Hub")
-        }
-    }
-    items(devices, key = { it.connectionId }) { device ->
-        CornCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(device.name, color = if (device.candidate) CornColors.Text else CornColors.Mute,
-                    fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                when {
-                    !device.candidate -> Chip("非烧录器 · 已忽略")
-                    device.permissionGranted -> Chip("已授权", ChipTone.OK, dot = true)
-                    else -> Chip("未授权", ChipTone.WARN, dot = true)
+}
+
+@Composable
+private fun ColumnScope.RunningScreen(vm: FlashViewModel, state: SessionState, log: RunLog, seq: Int, fw: ImportedFirmware?) {
+    val now by produceState(System.currentTimeMillis(), state.running) { while (true) { value = System.currentTimeMillis(); kotlinx.coroutines.delay(200) } }
+    val elapsed = (now - log.startedAt).coerceAtLeast(1)
+    val p = state.progress.coerceIn(0f, 1f)
+    val bytes = (fw?.image?.totalBytes ?: 0) * p
+    BackTop("烧录中", "工位 1 · ${fw?.name ?: ""}", onBack = {}) { Chip("请勿拔线", ChipTone.WARN, dot = true) }
+    ScrollBody(Modifier.weight(1f)) {
+        Box(Modifier.fillMaxWidth().padding(top = 6.dp), contentAlignment = Alignment.Center) {
+            Ring(p) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    T("${(p * 100).toInt()}%", size = 40.sp, weight = FontWeight.Bold, mono = true)
+                    T("正在${state.flashStage?.let { stageLabel(it) } ?: "准备"}", CornColors.Corn, 13.sp, FontWeight.SemiBold)
                 }
             }
-            KeyValue("VID / PID", "%04X / %04X".format(device.vendorId, device.productId), mono = true)
-            device.serial?.let { KeyValue("序列号", it, mono = true) }
-            if (device.candidate && !device.permissionGranted) {
-                Text("之前拒绝过授权时，可以在这里重新授权。", color = CornColors.Dim, fontSize = 12.sp)
-                CornButton("授权", { vm.authorize(device.connectionId) }, primary = true, height = 44)
-            }
         }
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            StatCell(if (bytes > 0) "%.1f KB/s".format(bytes / 1024f / (elapsed / 1000f)) else "—", "速度", size = 16.sp, modifier = Modifier.weight(1f))
+            VDivider()
+            StatCell(if (p > 0.05f) secs(((elapsed * (1 - p)) / p).toLong()) else "—", "剩余", size = 16.sp, modifier = Modifier.weight(1f))
+            VDivider()
+            StatCell("#${seq + 1}", "本次序号", size = 16.sp, modifier = Modifier.weight(1f))
+        }
+        StepList(state.flashStage, null, log, fw?.let { erasePages(it, vm.profile) }, running = true)
+        LiveLog(log)
+        SimNote()
     }
+    Box(Modifier.padding(16.dp)) { HoldToAbort(vm::cancel) }
 }
 
-// ---------------------------------------------------------------- records
+@Composable
+fun SimNote() = T("模拟烧录器：流程与计时为演示，不操作真实芯片", CornColors.Mute, 11.sp, align = TextAlign.Center, modifier = Modifier.fillMaxWidth())
 
-private fun LazyListScope.recordItems(
-    history: List<JobEntity>, batches: List<dev.corn.flashing.storage.BatchEntity>,
-    onExport: () -> Unit, onReport: (String) -> Unit,
-) {
-    item { CornButton("导出 JSON 记录", onExport, height = 44) }
-    if (batches.isNotEmpty()) {
-        item { Label("批次") }
-        items(batches, key = { "b" + it.id }) { b ->
-            CornCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(b.workOrder, color = CornColors.Text, fontWeight = FontWeight.Bold)
-                        Text("${formatDateTime(b.startedAt)} · 计划 ${b.planned} · ${b.firmwareName}", color = CornColors.Dim, fontSize = 12.sp)
+/** 6-step stepper. [stoppedAt] marks a failed / interrupted step in red. */
+@Composable
+fun StepList(current: FlashStage?, stoppedAt: FlashStage?, log: RunLog?, pages: Int?, running: Boolean) {
+    val curIndex = current?.let { SIX_STEPS.indexOf(it).let { i -> if (it == FlashStage.SUCCEEDED) 6 else i } } ?: -1
+    val stopIndex = stoppedAt?.let { SIX_STEPS.indexOf(it) } ?: -1
+    CornCard(spacing = 0.dp) {
+        SIX_STEPS.forEachIndexed { i, stage ->
+            val done = if (stopIndex >= 0) i < stopIndex else i < curIndex
+            val now = if (stopIndex >= 0) i == stopIndex else i == curIndex && running
+            val bad = stopIndex >= 0 && i == stopIndex
+            Row(verticalAlignment = Alignment.Top) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(Modifier.size(22.dp).clip(CircleShape).background(when { bad -> CornColors.Red; done -> CornColors.Leaf; now -> CornColors.Corn; else -> Color.Transparent })
+                        .let { if (!done && !now) it.border(1.5.dp, CornColors.Mute, CircleShape) else it }, contentAlignment = Alignment.Center) {
+                        when {
+                            bad -> Ico(Lucide.X, CornColors.CornOn, 12.dp)
+                            done -> Ico(Lucide.Check, CornColors.CornOn, 12.dp)
+                            now -> Box(Modifier.size(7.dp).clip(CircleShape).background(CornColors.CornOn))
+                        }
                     }
-                    TextButton(onClick = { onReport(b.id) }) { Text("报告", color = CornColors.Corn) }
+                    if (i < SIX_STEPS.lastIndex) Box(Modifier.width(2.dp).height(14.dp).background(if (done) CornColors.Leaf.copy(alpha = .5f) else CornColors.Line))
                 }
+                Spacer(Modifier.width(10.dp))
+                T(stepLabel(stage, pages), when { bad -> CornColors.Red; now -> CornColors.Corn; done -> CornColors.Text; else -> CornColors.Mute },
+                    13.5.sp, if (now) FontWeight.Bold else FontWeight.Medium, modifier = Modifier.weight(1f).padding(top = 2.dp))
+                val t = log?.let { stepTime(it, i) }
+                T(when { bad -> if (stage == FlashStage.WRITING) "中断" else "失败"; t != null -> t; now -> "…"; else -> "" },
+                    if (bad) CornColors.Red else CornColors.Dim, 11.5.sp, mono = true, modifier = Modifier.padding(top = 3.dp))
             }
         }
     }
-    item { Label("最近任务") }
-    if (history.isEmpty()) item {
-        DashedNote { Text("还没有任务记录", color = CornColors.Dim) }
+}
+
+private fun stepTime(log: RunLog, index: Int): String? {
+    val start = log.stageStart[SIX_STEPS[index]] ?: return null
+    val next = SIX_STEPS.drop(index + 1).firstNotNullOfOrNull { log.stageStart[it] }
+        ?: log.stageStart[FlashStage.SUCCEEDED] ?: log.endedAt.takeIf { it > 0 } ?: return null
+    return secs(next - start)
+}
+
+@Composable
+fun LiveLog(log: RunLog, expandedDefault: Boolean = false) {
+    var expanded by remember { mutableStateOf(expandedDefault) }
+    CornCard(color = Color(0xFF0D0D0D), spacing = 6.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Label("实时日志", Modifier.weight(1f))
+            T(if (expanded) "收起 ‹" else "展开 ›", CornColors.Corn, 11.5.sp, FontWeight.SemiBold, modifier = Modifier.clickable { expanded = !expanded })
+        }
+        val lines = if (expanded) log.lines else log.lines.takeLast(4)
+        lines.forEach { T(it, Color(0xFF8F8A7E), 10.5.sp, mono = true, maxLines = if (expanded) 3 else 1) }
+        if (log.lines.isEmpty()) T("等待开始…", Color(0xFF8F8A7E), 10.5.sp, mono = true)
     }
-    items(history, key = { it.id }) { record ->
+}
+
+/** Danger button that only aborts after a 1 s hold. */
+@Composable
+private fun HoldToAbort(onAbort: () -> Unit) {
+    var holding by remember { mutableStateOf(false) }
+    val progress by androidx.compose.animation.core.animateFloatAsState(if (holding) 1f else 0f,
+        androidx.compose.animation.core.tween(if (holding) 1000 else 150, easing = androidx.compose.animation.core.LinearEasing), label = "hold") {
+        if (it >= 1f && holding) { holding = false; onAbort() }
+    }
+    Box(Modifier.fillMaxWidth().height(52.dp).clip(RoundedCornerShape(16.dp))
+        .border(1.5.dp, CornColors.Red.copy(alpha = .55f), RoundedCornerShape(16.dp))
+        .pointerInput(Unit) {
+            detectTapGestures(onPress = {
+                holding = true
+                tryAwaitRelease()
+                holding = false
+            })
+        }, contentAlignment = Alignment.CenterStart) {
+        Box(Modifier.fillMaxHeight().fillMaxWidth(progress).background(CornColors.RedContainer))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+            Ico(Lucide.X, CornColors.Red, 18.dp)
+            Spacer(Modifier.width(8.dp))
+            T("长按 1 秒中止", CornColors.Red, 15.sp, FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun ResultHeader(icon: ImageVector, color: Color, bg: Color, title: String, sub: String) {
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp), horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(Modifier.size(88.dp).clip(CircleShape).background(bg), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(62.dp).clip(CircleShape).background(color), contentAlignment = Alignment.Center) {
+                Ico(icon, CornColors.CornOn, 30.dp)
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        T(title, size = 24.sp, weight = FontWeight.Bold)
+        T(sub, CornColors.Dim, 12.5.sp, mono = true)
+    }
+}
+
+@Composable
+private fun ColumnScope.SuccessScreen(vm: FlashViewModel, state: SessionState, log: RunLog, seq: Int, onBack: () -> Unit) {
+    val job = state.job!!
+    val fw = state.firmware
+    var showLog by remember { mutableStateOf(false) }
+    BackTop("烧录完成", "工位 1 · ${job.firmwareName}", onBack = onBack) { Chip("可拔线", ChipTone.OK, dot = true) }
+    ScrollBody(Modifier.weight(1f)) {
+        ResultHeader(Lucide.Check, CornColors.Leaf, CornColors.LeafContainer, "烧录成功",
+            "#$seq · 用时 ${secs((job.finishedAt ?: job.startedAt) - job.startedAt)} · ${formatTime(job.finishedAt ?: job.startedAt)}")
+        CornCard(padding = 14.dp) {
+            KeyValue("芯片", state.target?.let { "STM32F103 · ${it.flashSizeBytes / 1024} KB" } ?: "STM32F103")
+            KeyValue("UID", shortUid(job.targetUid), mono = true)
+            KeyValue("写入", fw?.let { "${kb(it.image.totalBytes)} · ${erasePages(it, vm.profile)} 页" } ?: "—", mono = true)
+            KeyValue("回读校验", "通过 · 模拟", valueColor = CornColors.Leaf)
+            KeyValue("复位", if (vm.prefs.resetAfter) "已运行 · 模拟" else "未复位", last = true)
+        }
+        if (showLog) LiveLog(log, expandedDefault = true)
+        DashedNote {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Ico(Lucide.Repeat, CornColors.Corn, 16.dp)
+                T("等待下一块板…", CornColors.Corn, 14.sp, FontWeight.SemiBold)
+            }
+            T(if (vm.prefs.autoNextBoard) "换上新板后自动开始（模拟：点「立即再烧一块」）" else "自动换板已关闭", CornColors.Dim, 11.5.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.padding(top = 4.dp)) {
+                listOf(1f, .6f, .3f).forEach { Box(Modifier.size(6.dp).clip(CircleShape).background(CornColors.Corn.copy(alpha = it))) }
+            }
+        }
+    }
+    Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        CornButton(if (showLog) "收起日志" else "查看日志", { showLog = !showLog }, Modifier.weight(1f))
+        CornButton("立即再烧一块", vm::startSingle, Modifier.weight(1.4f), primary = true, icon = Lucide.Play)
+    }
+}
+
+private val noTargetWords = listOf("电压", "未响应")
+
+@Composable
+private fun ColumnScope.FailedScreen(vm: FlashViewModel, state: SessionState, log: RunLog, seq: Int, onBack: () -> Unit) {
+    val job = state.job!!
+    val stage = state.failedStage
+    val noTarget = stage == FlashStage.PROBING || noTargetWords.any { job.message.contains(it) }
+    var showLog by remember { mutableStateOf(false) }
+    if (noTarget) {
+        NoTargetScreen(vm, job, onBack)
+        return
+    }
+    val addr = Regex("0x[0-9A-Fa-f]{8}").find(job.message)?.value
+    val hex = Regex("0x[0-9A-Fa-f]{2}\\b").findAll(job.message).map { it.value }.toList()
+    BackTop("烧录失败", "工位 1 · ${job.firmwareName}", onBack = onBack) { Chip("该板未通过", ChipTone.BAD, dot = true) }
+    ScrollBody(Modifier.weight(1f)) {
+        ResultHeader(Lucide.X, CornColors.Red, CornColors.RedContainer,
+            stage?.let { if (it == FlashStage.VERIFYING) "校验失败" else "${stageLabel(it)}失败" } ?: "烧录失败",
+            "#$seq · 停在「${stage?.let { stepLabel(it, null).trim() } ?: job.stage}」")
         CornCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(record.seq?.let { "#$it " }.orEmpty() + record.firmwareName, color = CornColors.Text,
-                    fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                Chip(statusLabel(record.status), statusTone(record.status))
-            }
-            Text("${formatDateTime(record.startedAt)} · UID ${shortUid(record.targetUid)}" +
-                (record.serial?.let { " · $it" } ?: ""), color = CornColors.Dim, fontSize = 12.sp)
-            Text(record.message, color = CornColors.Dim, fontSize = 12.sp)
+            KeyValue("出错地址", addr ?: "—", mono = true, valueColor = CornColors.Red)
+            KeyValue("期望", hex.getOrNull(0) ?: "—", mono = true)
+            KeyValue("实际", hex.getOrNull(1) ?: "—", mono = true, valueColor = CornColors.Red)
+            KeyValue("已完成", stage?.let { s -> SIX_STEPS.takeWhile { it != s }.joinToString(" · ") { stageLabel(it) } } ?: "—")
+            KeyValue("目标电压", "3.30 V · 模拟", mono = true, last = true)
         }
+        CornCard(color = CornColors.RedContainer, border = CornColors.Red.copy(alpha = .25f), spacing = 4.dp) {
+            T("可能原因", CornColors.Red, 13.5.sp, FontWeight.Bold)
+            T("· 这块板的 Flash 有坏页，写入后读回不一致", CornColors.Dim, 12.sp)
+            T("· SWD 线过长或接触不良，写入时数据出错", CornColors.Dim, 12.sp)
+            T("· 目标板供电不稳，擦写时电压跌落", CornColors.Dim, 12.sp)
+        }
+        CornCard(spacing = 4.dp) {
+            T("建议", size = 13.5.sp, weight = FontWeight.Bold)
+            T("先重试一次；同一块板连续失败就标为不良换板，不同板都失败请检查接线和供电。", CornColors.Dim, 12.sp)
+        }
+        if (showLog) LiveLog(log, expandedDefault = true)
+        T(job.message, CornColors.Mute, 11.sp, mono = true)
+    }
+    Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        CornButton(if (showLog) "收起日志" else "完整日志", { showLog = !showLog }, Modifier.weight(1f))
+        CornButton("重试此板", vm::startSingle, Modifier.weight(1.4f), primary = true, icon = Lucide.Refresh)
+    }
+}
+
+/** Screen 19: target did not answer. */
+@Composable
+private fun ColumnScope.NoTargetScreen(vm: FlashViewModel, job: JobEntity, onBack: () -> Unit) {
+    BackTop("目标板没有响应", "工位 1 · ${job.firmwareName}", onBack = onBack) { Chip("目标未连接", ChipTone.BAD, dot = true) }
+    ScrollBody(Modifier.weight(1f)) {
+        Chain(
+            ChainNode(Lucide.Phone, "Android", "OTG 可用", CornColors.Leaf),
+            ChainNode(Lucide.Usb, "ST-LINK/V2", "模拟器", CornColors.Leaf),
+            ChainNode(Lucide.Chip, "目标板", "0.00 V", CornColors.Red),
+        )
+        Banner("目标板没有响应", "探针正常，但读不到目标电压，也连不上 SWD。（${job.message}）")
+        CornCard(spacing = 0.dp) {
+            Label("SWD 接线检查", Modifier.padding(bottom = 4.dp))
+            PinRow("3V3", "目标 VDD", "0.00 V", CornColors.Red)
+            PinRow("SWDIO", "PA13", "—", CornColors.Dim)
+            PinRow("SWCLK", "PA14", "—", CornColors.Dim)
+            PinRow("GND", "GND", "共地", CornColors.Leaf, last = true)
+            T("ST-LINK/V2 的 3V3 脚只检测电压，不给目标板供电。", CornColors.Mute, 11.sp, modifier = Modifier.padding(top = 6.dp))
+        }
+        CornCard(padding = 12.dp) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Ico(Lucide.Refresh, CornColors.Corn, 16.dp)
+                T("点「复位后连接」再试一次（模拟器不会自动重试）", CornColors.Dim, 12.sp, modifier = Modifier.weight(1f))
+            }
+        }
+    }
+    Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        CornButton("降速 1.8 MHz 重试", vm::startSingle, Modifier.weight(1f))
+        CornButton("复位后连接", vm::startSingle, Modifier.weight(1f), primary = true)
+    }
+}
+
+@Composable
+fun PinRow(pin: String, target: String, value: String, color: Color, last: Boolean = false) {
+    Column {
+        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            T(pin, size = 13.sp, weight = FontWeight.Bold, mono = true, modifier = Modifier.width(64.dp))
+            T("→", CornColors.Mute, 13.sp, modifier = Modifier.width(24.dp))
+            T(target, CornColors.Dim, 13.sp, mono = true, modifier = Modifier.weight(1f))
+            T(value, color, 12.5.sp, FontWeight.SemiBold, mono = true)
+        }
+        if (!last) DividerLine()
+    }
+}
+
+/** Screen 20: aborted / interrupted mid-flash. */
+@Composable
+private fun ColumnScope.AbortedScreen(vm: FlashViewModel, state: SessionState, log: RunLog, onBack: () -> Unit) {
+    val job = state.job!!
+    val stopped = log.stageStart.keys.filter { it != FlashStage.SUCCEEDED }.maxByOrNull { it.ordinal } ?: FlashStage.CONNECTING
+    BackTop("烧录中断", "工位 1 · ${job.firmwareName}", onBack = onBack) { Chip("未完成", ChipTone.BAD, dot = true) }
+    ScrollBody(Modifier.weight(1f)) {
+        Column(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(Modifier.size(84.dp).clip(CircleShape).background(CornColors.RedContainer), contentAlignment = Alignment.Center) {
+                Ico(Lucide.Usb, CornColors.Red, 36.dp)
+            }
+            T(if (job.status == "INTERRUPTED") "烧录被打断" else "已手动中止", size = 22.sp, weight = FontWeight.Bold)
+            T("停在「${stepLabel(stopped, null).trim()}」· ${formatTime(job.finishedAt ?: job.startedAt)}", CornColors.Dim, 12.5.sp)
+        }
+        Banner("这块板现在不能用", "可能已经擦除，只写了一部分，程序不完整。同一块板需要从头重烧。")
+        StepList(null, stopped, log, null, running = false)
+        DashedNote {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Ico(Lucide.Repeat, CornColors.Corn, 16.dp)
+                T("等待重新开始…", CornColors.Corn, 14.sp, FontWeight.SemiBold)
+            }
+            T("接回后会核对 UID，同一块板从头重烧", CornColors.Dim, 11.5.sp)
+        }
+    }
+    Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        CornButton("标为不良", onBack, Modifier.weight(1f), textColor = CornColors.Red)
+        CornButton("从头重烧", vm::startSingle, Modifier.weight(1f), primary = true, icon = Lucide.Refresh)
     }
 }
