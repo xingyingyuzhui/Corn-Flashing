@@ -25,7 +25,11 @@ class AlgorithmLibrary(context: Context) {
     val installed = _installed.asStateFlow()
     private val _bindings = MutableStateFlow<List<AlgorithmBinding>>(emptyList())
     val bindings = _bindings.asStateFlow()
+    private val executionGate = ExperimentalAlgorithmGate()
+    val experimentalEnabled = executionGate.enabled
     init { restore() }
+
+    @Synchronized fun setExperimentalEnabled(enabled: Boolean) { executionGate.setEnabled(enabled) }
 
     fun candidates(name: String, bytes: ByteArray): List<AlgorithmCandidate> {
         if (name.endsWith(".pack", true)) {
@@ -70,6 +74,7 @@ class AlgorithmLibrary(context: Context) {
     } catch (error: Exception) { error.message ?: "算法不匹配" }
 
     @Synchronized fun bind(hash: String, target: TargetInfo) {
+        executionGate.requireEnabled()
         val item = requireNotNull(_installed.value.find { it.hash == hash }) { "算法不存在" }
         require(compatibility(item, target) == null) { compatibility(item, target) ?: "算法不匹配" }
         publish(_installed.value, _bindings.value.filterNot { it.deviceId == target.deviceId || it.hash == hash } + AlgorithmBinding(target.deviceId, target.flashSizeBytes, hash))
@@ -83,6 +88,7 @@ class AlgorithmLibrary(context: Context) {
     }
 
     @Synchronized fun snapshot(): AlgorithmSnapshot {
+        if (!experimentalEnabled.value) return AlgorithmSnapshot(TargetCatalog.registry, emptyList())
         val drivers = mutableListOf<FlashAlgorithm>()
         val descriptors = TargetCatalog.descriptors.map { base ->
             val binding = _bindings.value.find { it.deviceId == base.deviceId } ?: return@map base
@@ -92,7 +98,7 @@ class AlgorithmLibrary(context: Context) {
             val descriptor = base.copy(key = "pack-${base.deviceId.toString(16)}-${item.hash}",
                 allowedCapacityKiB = setOf(binding.capacityBytes / 1024),
                 algorithmId = "flm-${item.hash}", support = TargetSupport.FLASH_ALGORITHM)
-            drivers += FlmFlashAlgorithm(item.model, descriptor)
+            drivers += executionGate.guard(FlmFlashAlgorithm(item.model, descriptor))
             descriptor
         }
         return AlgorithmSnapshot(TargetRegistry(descriptors), drivers)

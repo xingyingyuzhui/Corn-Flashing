@@ -33,6 +33,7 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     val algorithmLibrary get() = app.algorithms
     val installedAlgorithms = app.algorithms.installed
     val algorithmBindings = app.algorithms.bindings
+    val experimentalAlgorithmsEnabled = app.algorithms.experimentalEnabled
     val targetRegistry get() = app.algorithms.snapshot().targets
     val profile get() = repository.profile
     val prefs = Prefs(application)
@@ -125,8 +126,8 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     private val _algorithmBusy = MutableStateFlow(false)
     val algorithmBusy = _algorithmBusy.asStateFlow()
     private fun algorithmChangeAllowed(): Boolean {
-        if (session.value.running || session.value.probing || batch.value != null || _algorithmBusy.value) {
-            notify("请先结束烧录、识别或批次，再修改算法")
+        if (session.value.running || session.value.probing || session.value.importing || batch.value != null || _algorithmBusy.value) {
+            notify("请先结束烧录、识别、导入或批次，再修改算法")
             return false
         }
         stopWatchingNextBoard()
@@ -175,10 +176,16 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
             } finally { _algorithmBusy.value = false }
         }
     }
-    fun bindAlgorithm(hash: String) {
+    fun setExperimentalAlgorithmsEnabled(enabled: Boolean) {
+        if (!algorithmChangeAllowed()) return
+        app.algorithms.setExperimentalEnabled(enabled)
+        if (!enabled) notify("外部 FLM 实验执行已关闭：已保存的绑定停用，恢复内置支持。")
+    }
+    fun bindAlgorithm(hash: String, expectedTarget: dev.corn.flashing.core.TargetInfo) {
         if (!algorithmChangeAllowed()) return
         try {
             val target = requireNotNull(session.value.target) { "请先识别实际芯片" }
+            require(target == expectedTarget) { "确认期间目标已变化，请重新核对后绑定" }
             require(!prefs.simulator) { "请关闭模拟模式并识别实际芯片" }
             app.algorithms.bind(hash, target)
             notify("已为设备组0x${target.deviceId.toString(16)}绑定此算法。首次实板使用仍需验证。")

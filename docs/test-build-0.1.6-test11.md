@@ -15,6 +15,7 @@
 - 170项core/app测试、assembleDebug、lintDebug通过。
 - 新增PackReader、FLM parser、runner与错误路径测试，原创952B测试FLM只有no-op返回，不会擦写真实Flash；不随App默认注册。
 - Unicorn运行测试FLM真实Thumb4入口，确认LR返回BKPT、R0=0、R9/SP保持。测试不代表实际Flash编程。
+- 当时脚本仅保存在本机；0.1.8-test1 补充仓库内的[可复现脚本和固定依赖](thumb-runtime-validation.md)。
 - 独立审查三处修正闭合：Init错误返回清理、安全状态读前失效、原子持久化后发布绑定。
 - 手机Xiaomi25060RK16C Android17/API37完成真实厂商F4 1MB FLM解析与本地验证.pack的PDSC→选择→FLM导入。当前256KB F1目标容量不符，UI阻止绑定；本地索引bindings=[]。
 - App强制停止重启后算法恢复，仍未启用。

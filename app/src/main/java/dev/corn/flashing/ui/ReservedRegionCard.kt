@@ -62,7 +62,7 @@ fun ReservedRegionCard(vm: FlashViewModel) {
         CornButton("添加地址范围", {
             editingIndex = -1; start = ""; end = ""; error = null; editing = true
         }, Modifier.fillMaxWidth(), enabled = !locked && target != null && settings.error == null && policy.ranges.size < 32, height = 44)
-        T("起始、结束地址均包含在范围内；不会自动扩大到整页。固件覆盖保留区时拒绝烧录，整片擦除也会跳过保留页。", CornColors.Mute, 11.5.sp)
+        T("起始、结束地址均包含在范围内；不会自动扩大到整页。固件覆盖保留区时拒绝烧录，“全部非保留区”会跳过保留页。外部 FLM 自身的访问行为无法由此限制。", CornColors.Mute, 11.5.sp)
         T("关闭后已保存地址不生效；本功能不阻止新固件启动后主动清空参数，也不管理外置 EEPROM。", CornColors.Mute, 11.5.sp)
     }
     if (editing) {

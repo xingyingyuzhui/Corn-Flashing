@@ -2,6 +2,8 @@
 
 正式版：**0.1.7**（versionCode 21）。本版修复系统底部手势区域的沉浸效果，保留悬浮 dock 的安全间距，详见 [沉浸修复说明](docs/navigation-bar-immersion-fix.md)。保留 0.1.6 的参数保留区、CMSIS-Pack/FLM 算法导入与可扩展兼容性引擎。
 
+开发版 **0.1.8-test1**：外部 FLM 实验执行每次启动默认关闭，旧绑定停用；开启会恢复已保存的绑定，新绑定需明确确认，仍无具体料号实板兼容保证。移除未实现的 CRC32 校验选项（旧偏好迁移为全量回读），擦除选项改为“全部非保留区”。[Thumb 模拟验证现可从仓库复现](docs/thumb-runtime-validation.md)。
+
 Android 离线单片机烧录工具的基础框架。目标为 ST-LINK/V2 + STM32F103，后续扩展其他探针和多路批量。
 
 **公开源码 · 非商业授权：[PolyForm Noncommercial 1.0.0](LICENSE)。**

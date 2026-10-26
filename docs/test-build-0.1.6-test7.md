@@ -17,6 +17,7 @@
 - 106项core/app单元测试、assembleDebug、lintDebug通过。
 - scripts/verify-f1-loader.py：NDK LLVM重新编译汇编，与全部48字节内嵌机器码一致。
 - Unicorn运行真实Thumb机器码：0/1/2/255/256半字、BSY轮询、PGERR停止、BSY卡死指令上限；Flash写访问均为16位。
+- 当时脚本仅保存在本机；0.1.8-test1 将验证整理进仓库，固定依赖与复现入口见 [Thumb运行验证](thumb-runtime-validation.md)。
 - 独立审查通过。首次手机写入因中途脱离halt失败；添加DBGMCU看门狗调试冻结后，完整69668字节写入与回读通过，随后暴露NRST依赖的复位问题，已改为AIRCR软件复位。
 
 ## 最终手机实烧

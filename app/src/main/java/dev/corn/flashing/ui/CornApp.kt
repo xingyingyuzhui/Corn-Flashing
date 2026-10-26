@@ -67,6 +67,7 @@ fun CornApp(vm: FlashViewModel) {
     val history by vm.history.collectAsStateWithLifecycle(initialValue = emptyList())
     val devices by vm.devices.collectAsStateWithLifecycle()
     val reservedSettings by vm.reservedSettings.collectAsStateWithLifecycle()
+    val experimentalEnabled by vm.experimentalAlgorithmsEnabled.collectAsStateWithLifecycle()
     val notice by vm.notice.collectAsStateWithLifecycle()
     val batch by vm.batch.collectAsStateWithLifecycle()
     val offer by vm.resumeOffer.collectAsStateWithLifecycle()
@@ -149,6 +150,7 @@ fun CornApp(vm: FlashViewModel) {
     }
 
     CornTheme {
+      key(experimentalEnabled) {
         val sim = prefs.simulator
         Box(Modifier.fillMaxSize().background(CornColors.Background)) {
             val reportId = report
@@ -216,6 +218,7 @@ fun CornApp(vm: FlashViewModel) {
             }
             offer?.let { ResumeSheet(it, vm) }
         }
+      }
     }
 }
 
@@ -296,7 +299,8 @@ private fun Workbench(
 ) {
     val reservedSettings by vm.reservedSettings.collectAsStateWithLifecycle()
     val bindings by vm.algorithmBindings.collectAsStateWithLifecycle()
-    val targetRegistry = remember(bindings) { vm.targetRegistry }
+    val experimentalEnabled by vm.experimentalAlgorithmsEnabled.collectAsStateWithLifecycle()
+    val targetRegistry = remember(bindings, experimentalEnabled) { vm.targetRegistry }
     val batch by vm.batch.collectAsStateWithLifecycle()
     val probe = devices.firstOrNull { it.candidate }
     val probeOk = sim || probe?.permissionGranted == true
@@ -367,12 +371,15 @@ private fun Workbench(
         if (!sim) state.target?.let { target ->
             val descriptor = vm.targetRegistry.find(target.deviceId)
             val programmable = descriptor?.support == TargetSupport.FLASH_ALGORITHM
+            val external = descriptor?.algorithmId?.startsWith("flm-") == true
             CornCard(spacing = 6.dp) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Label("当前目标兼容性", Modifier.weight(1f))
-                    Chip(if (programmable) "算法已接入" else if (descriptor == null) "未登记" else "仅识别", if (programmable) ChipTone.OK else ChipTone.WARN)
+                    Chip(if (external) "实验 · 未验证" else if (programmable) "算法已接入" else if (descriptor == null) "未登记" else "仅识别",
+                        if (programmable && !external) ChipTone.OK else ChipTone.WARN)
                 }
-                T(if (programmable) "已匹配内置烧录算法；烧录前仍会检查探针能力、容量和固件范围。"
+                T(if (external) "已启用外部 FLM 实验算法，尚无对应料号实板验证；不能保证其自身不访问保留区或 Option Bytes/RDP。"
+                    else if (programmable) "已匹配内置烧录算法；烧录前仍会检查探针能力、容量和固件范围。"
                     else "已识别目标信息，当前没有匹配的烧录算法，暂不开放擦写。", CornColors.Dim, 12.sp)
             }
         }

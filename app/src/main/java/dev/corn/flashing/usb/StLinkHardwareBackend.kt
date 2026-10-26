@@ -22,7 +22,8 @@ import kotlinx.coroutines.sync.withLock
 
 /**
  * Real ST-LINK/V2 path: probe + STM32F1 page erase / half-word program / readback.
- * Does not unlock RDP or write option bytes.
+ * The built-in F1 algorithm does not unlock RDP or write option bytes.
+ * Experimental external algorithms execute target code and cannot share that guarantee.
  */
 class StLinkHardwareBackend(
     private val manager: UsbManager,
