@@ -3,6 +3,7 @@ package dev.corn.flashing
 import android.app.Activity
 import android.app.Application
 import android.content.Intent
+import android.hardware.usb.UsbManager
 import android.os.Bundle
 import androidx.core.content.ContextCompat
 import androidx.room.Room
@@ -11,6 +12,7 @@ import dev.corn.flashing.storage.BatchController
 import dev.corn.flashing.storage.FlashDatabase
 import dev.corn.flashing.storage.FlashRepository
 import dev.corn.flashing.storage.JobLauncher
+import dev.corn.flashing.usb.StLinkHardwareBackend
 import dev.corn.flashing.usb.UsbProbeMonitor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,8 +34,12 @@ class CornApplication : Application() {
         super.onCreate()
         registerActivityLifecycleCallbacks(ForegroundTracker())
         val database = Room.databaseBuilder(this, FlashDatabase::class.java, "corn-flashing.db").build()
-        repository = FlashRepository(this, database.dao())
         usb = UsbProbeMonitor(this)
+        val usbManager = getSystemService(UsbManager::class.java)
+        repository = FlashRepository(this, database.dao()) {
+            val device = StLinkHardwareBackend.findAuthorized(usbManager, usb.devices.value) ?: return@FlashRepository null
+            StLinkHardwareBackend(usbManager, device)
+        }
         launcher = JobLauncher { id ->
             try {
                 ContextCompat.startForegroundService(this, Intent(this, FlashService::class.java).putExtra(FlashService.EXTRA_JOB_ID, id))

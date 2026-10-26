@@ -25,11 +25,19 @@ class FlashPlannerTest {
         assertEquals(listOf(0x08000400L), FlashPlanner.plan(bin(0x400, 1), guarded, target).erasePageAddresses)
     }
 
-    @Test fun rejectsUnknownDeviceCapacityMismatchAndWrongPageGeometry() {
+    @Test fun rejectsUnknownDeviceBogusCapacityAndWrongPageGeometry() {
         failsContaining("未知") { FlashPlanner.plan(bin(0, 1), profile, target.copy(deviceId = 0x999)) }
-        failsContaining("容量不符合") { FlashPlanner.plan(bin(0, 1), profile, target.copy(flashSizeBytes = 131072)) }
         failsContaining("容量异常") { FlashPlanner.plan(bin(0, 1), profile, target.copy(flashSizeBytes = 123)) }
         failsContaining("页大小") { FlashPlanner.plan(bin(0, 1), profile.copy(pageSize = 2048), target) }
+    }
+
+    @Test fun acceptsProbed128kForMediumDensityAndPlansBeyond64k() {
+        val target128 = target.copy(flashSizeBytes = 128L * 1024)
+        val plan = FlashPlanner.plan(bin(0x10000, 1), profile, target128)
+        assertEquals(128L * 1024, plan.profile.flashSizeBytes)
+        assertEquals(listOf(0x08010000L), plan.erasePageAddresses)
+        // Same firmware is rejected when the chip only has 64 KB
+        failsContaining("超出") { FlashPlanner.plan(bin(0x10000, 1), profile, target) }
     }
 
     @Test fun rejectsRamAndOverlappingManuallyConstructedImages() {

@@ -26,6 +26,8 @@ data class JobRequest(
     val batchId: String? = null,
     val seq: Int? = null,
     val serialOnSuccess: String? = null,
+    /** When false, [FlashRepository] opens the real ST-LINK backend instead of the demo board. */
+    val useSimulator: Boolean = true,
 )
 
 data class SessionState(
@@ -50,12 +52,25 @@ data class SessionState(
 fun interface JobLauncher { fun start(id: String): Boolean }
 
 /** Application-scoped state survives Activity recreation; Room stores durable results. */
-class FlashRepository(private val context: Context, private val dao: FlashDao) {
+/** Opens a real ST-LINK backend when the user is not in simulator mode; null if unavailable. */
+fun interface RealBackendProvider { fun open(): FlashBackend? }
+
+class FlashRepository(
+    private val context: Context,
+    private val dao: FlashDao,
+    private val realBackend: RealBackendProvider = RealBackendProvider { null },
+) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val _state = MutableStateFlow(SessionState())
     val state = _state.asStateFlow()
     val history = dao.recentJobs()
-    val profile = ProductProfile()
+    /** Family template; capacity is filled from the last probed target when present. */
+    val profile: ProductProfile
+        get() {
+            val target = _state.value.target
+            return if (target != null) ProductProfiles.alignedTo(ProductProfiles.F103_MEDIUM, target)
+            else ProductProfiles.F103_MEDIUM
+        }
     private var pending: Pair<JobEntity, Pair<ImportedFirmware, JobRequest>>? = null
     private val _finished = MutableSharedFlow<JobEntity>(extraBufferCapacity = 16)
     /** Every job's final row, once saved. */
@@ -159,12 +174,15 @@ class FlashRepository(private val context: Context, private val dao: FlashDao) {
             firmware.image.sourceSha256, profile.name, startedAt = System.currentTimeMillis(),
             targetUid = request.board.target.uid, batchId = request.batchId, seq = request.seq)
         pending = record to (firmware to request)
+        val sim = request.useSimulator
         _state.update { it.copy(running = true, progress = 0f, flashStage = null, failedStage = null, stage = "正在排队",
-            message = "正在保存任务，不操作 USB 设备", target = null, plan = null, job = record) }
+            message = if (sim) "正在保存任务，不操作 USB 设备" else "正在保存任务，稍后连接 ST-LINK",
+            target = null, plan = null, job = record) }
         try {
             dao.saveJob(record)
             pruneHistory()
-            _state.update { it.copy(stage = "等待启动", message = "模拟任务已排队，不操作 USB 设备") }
+            _state.update { it.copy(stage = "等待启动",
+                message = if (sim) "模拟任务已排队，不操作 USB 设备" else "任务已排队，等待连接 ST-LINK") }
             val watchdogId = record.id
             scope.launch {
                 delay(LAUNCH_WATCHDOG_MS)
@@ -203,19 +221,29 @@ class FlashRepository(private val context: Context, private val dao: FlashDao) {
         var record = queued.first
         var failedStage: FlashStage? = null
         try {
-            record = record.copy(status = "RUNNING", stage = "探测模拟目标")
+            record = record.copy(status = "RUNNING", stage = if (request.useSimulator) "探测模拟目标" else "连接 ST-LINK")
             dao.saveJob(record)
             _state.update { it.copy(job = record, flashStage = FlashStage.CONNECTING, stage = stageLabel(FlashStage.CONNECTING)) }
-            val backend: FlashBackend = DemoFlashBackend(stepDelayMillis = 700, request.board.target, request.board.failure)
+            val backend: FlashBackend = if (request.useSimulator) {
+                DemoFlashBackend(stepDelayMillis = 700, request.board.target, request.board.failure)
+            } else {
+                realBackend.open()
+                    ?: error("未找到已授权的 ST-LINK，请在设备页授权后再试")
+            }
             val target = backend.probe()
-            val plan = FlashPlanner.plan(firmware.image, profile, target)
-            record = record.copy(targetUid = target.uid)
+            val plan = FlashPlanner.plan(firmware.image, ProductProfiles.F103_MEDIUM, target)
+            record = record.copy(targetUid = target.uid, mode = if (backend.isSimulation) "DEMO" else "STLINK")
             _state.update { it.copy(target = target, plan = plan) }
             backend.execute(plan) { event ->
                 _state.update { it.copy(progress = event.fraction, flashStage = event.stage, stage = stageLabel(event.stage), message = event.message) }
             }
-            record = record.copy(status = "SIMULATED", stage = "模拟完成", serial = request.serialOnSuccess,
-                message = "模拟流程完成；未进行真实擦写或硬件校验")
+            record = if (backend.isSimulation) {
+                record.copy(status = "SIMULATED", stage = "模拟完成", serial = request.serialOnSuccess,
+                    message = "模拟流程完成；未进行真实擦写或硬件校验")
+            } else {
+                record.copy(status = "SUCCEEDED", stage = "完成", serial = request.serialOnSuccess,
+                    message = "真实擦写完成")
+            }
         } catch (cancelled: CancellationException) {
             record = record.copy(status = "CANCELLED", stage = "已中止",
                 message = "任务在「${_state.value.stage}」时停止；这块板的程序可能不完整，需要重新烧录")
@@ -236,6 +264,20 @@ class FlashRepository(private val context: Context, private val dao: FlashDao) {
             _state.update { it.copy(running = false, job = record, failedStage = failedStage, stage = record.stage, message = record.message) }
             _finished.tryEmit(record)
         }
+    }
+
+    /** Identify the attached chip without erasing. Updates [SessionState.target] on success. */
+    suspend fun probeChip(): TargetInfo = withContext(Dispatchers.IO) {
+        val backend = realBackend.open() ?: error("未找到已授权的 ST-LINK")
+        val target = backend.probe()
+        _state.update {
+            it.copy(
+                target = target,
+                message = "已识别 ${target.family} · ${target.flashSizeBytes / 1024} KB" +
+                    (target.uid?.let { u -> " · $u" } ?: ""),
+            )
+        }
+        target
     }
 
     suspend fun exportHistory(uri: Uri) = withContext(Dispatchers.IO) {

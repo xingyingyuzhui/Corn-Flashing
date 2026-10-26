@@ -246,22 +246,31 @@ fun FlashGrid(fw: ImportedFirmware, profile: ProductProfile) {
 
 @Composable
 fun ConfigTab(vm: FlashViewModel) {
+    val state by vm.session.collectAsStateWithLifecycle()
     val p = vm.profile
     val prefs = vm.prefs
-    TopBar("产品配置", "决定哪些地址能写、怎么擦") { SimMark() }
+    val probed = state.target
+    TopBar("产品配置", "容量以芯片报告为准") {
+        if (probed == null && !prefs.simulator) Chip("未探测", ChipTone.WARN) else if (prefs.simulator) SimMark()
+    }
     ScrollBody {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Chip("F103 · 64 KB", ChipTone.WARN, dot = true)
-            Chip("F103 · 128 KB", onClick = { vm.notify("模拟：目前只有 F103 · 64 KB 一个预设") })
-            Chip("＋ 新建", onClick = { vm.notify("模拟：新建预设还没开放") })
+            val kib = (probed?.flashSizeBytes ?: p.flashSizeBytes) / 1024
+            Chip("F103 · ${kib} KB", ChipTone.WARN, dot = true)
+            Chip("重新识别", onClick = {
+                if (prefs.simulator) vm.notify("模拟模式：容量来自演示板（64 KB）")
+                else vm.probeChip()
+            })
         }
         CornCard {
             Label("目标芯片")
-            KeyValue("芯片系列", "STM32F1 中容量")
-            KeyValue("Flash 容量", "${p.flashSizeBytes / 1024} KB", mono = true)
-            KeyValue("页大小", "${p.pageSize / 1024} KB", mono = true)
+            KeyValue("芯片系列", probed?.family ?: "STM32F1 中容量（探测后确认）")
+            KeyValue("Flash 容量", "${(probed?.flashSizeBytes ?: p.flashSizeBytes) / 1024} KB" +
+                if (probed == null) " · 待探测" else " · 芯片报告", mono = true)
+            KeyValue("页大小", "${p.pageSize} B", mono = true)
+            KeyValue("UID", probed?.uid ?: "—", mono = true, last = true)
             Row(Modifier.fillMaxWidth().padding(top = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                T("容量不符时", CornColors.Dim, 13.sp, modifier = Modifier.weight(1f)); Chip("拒绝烧录", ChipTone.BAD)
+                T("固件超出容量时", CornColors.Dim, 13.sp, modifier = Modifier.weight(1f)); Chip("拒绝烧录", ChipTone.BAD)
             }
         }
         CornCard(spacing = 8.dp) {

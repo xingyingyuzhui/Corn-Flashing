@@ -27,7 +27,7 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     val usbMessage = app.usb.message
     val usbDenied = app.usb.lastDenied
     val hostSupported = app.usb.hostSupported
-    val profile = repository.profile
+    val profile get() = repository.profile
     val prefs = Prefs(application)
     val batch = batches.active
     val resumeOffer = batches.resumeOffer
@@ -95,10 +95,26 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Identify the chip on the authorized ST-LINK without erasing. */
+    fun probeChip() {
+        viewModelScope.launch {
+            try {
+                val target = repository.probeChip()
+                _notice.value = "已识别 ${target.family} · ${target.flashSizeBytes / 1024} KB"
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                _notice.value = "识别失败：${error.message}"
+            }
+        }
+    }
+
     private var singleCounter = 0L
 
-    /** Single runs use the default demo board; with fault injection on, some boards fail like in a batch. */
+    /** Simulator path uses demo boards; hardware path leaves the board blank for the ST-LINK backend. */
     private fun singleRequest(): dev.corn.flashing.storage.JobRequest {
+        if (!prefs.simulator) {
+            return dev.corn.flashing.storage.JobRequest(useSimulator = false)
+        }
         singleCounter++
         val target = dev.corn.flashing.core.DemoFlashBackend.DEFAULT_TARGET.copy(
             uid = "DEMO-%08X".format(0x35FF_D605L + singleCounter * 0x10F))
@@ -110,7 +126,10 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
             roll == 3 -> dev.corn.flashing.core.DemoFailure(dev.corn.flashing.core.FlashStage.PROBING, "模拟目标未响应：目标电压 0.00 V")
             else -> null
         }
-        return dev.corn.flashing.storage.JobRequest(dev.corn.flashing.core.SimulatedBoards.Board(target, failure))
+        return dev.corn.flashing.storage.JobRequest(
+            board = dev.corn.flashing.core.SimulatedBoards.Board(target, failure),
+            useSimulator = true,
+        )
     }
 
     fun cancel() {

@@ -25,9 +25,10 @@ data class FirmwareImage(
 }
 
 data class ProductProfile(
-    val id: String = "f103-64k",
-    val name: String = "STM32F103 · 64 KB",
+    val id: String = "f103-medium",
+    val name: String = "STM32F103 · 中容量",
     val flashStart: Long = 0x08000000L,
+    /** Placeholder until a chip is probed; planning uses [TargetInfo.flashSizeBytes]. */
     val flashSizeBytes: Long = 64L * 1024,
     val pageSize: Int = 1024,
     val reservedRanges: List<AddressRange> = emptyList(),
