@@ -240,7 +240,8 @@ private fun Legend(color: androidx.compose.ui.graphics.Color, label: String) {
 @Composable
 fun ResumeSheet(offer: ResumeOffer, vm: FlashViewModel) {
     ModalBottomSheet(onDismissRequest = vm::dismissResumeOffer, containerColor = CornColors.Surface1) {
-        Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("批次 ${offer.batch.workOrder} 没有结束", color = CornColors.Text, fontWeight = FontWeight.Bold, fontSize = 18.sp)
             Text("应用上次被关闭时批次还在进行。", color = CornColors.Dim, fontSize = 12.5.sp)
             KeyValue("进度", "${offer.tally.succeeded} / ${offer.batch.planned}", mono = true)
