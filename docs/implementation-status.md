@@ -1,5 +1,11 @@
 # 基础框架交付状态
 
+## 2026-10-26 · 发布 v0.1.5（合并 feat-stlink-flash-015）
+
+- PR #6 已合入 main；versionCode 7 / versionName 0.1.5。
+- 真实 STM32F1 页擦除 / 半字编程 / 回读 / 可选复位；批次可真机单工位。
+- 详见 docs/review-0.1.5.md。
+
 ## 2026-10-26 · 发布 v0.1.4（合并 fix-stlink-usb-config）
 
 - PR #5 已合入 main；versionCode 6 / versionName 0.1.4。
