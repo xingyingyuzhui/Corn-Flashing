@@ -164,8 +164,9 @@ class BatchController(
                 if (view.batch.status != BatchStatus.RUNNING) break
                 val config = config(view.batch)
                 // Resume after a process death must not replay the same simulated boards.
+                // Each board advances the UID counter by at most 3, so lastSeq * 3 is past every UID handed out so far.
                 val generator = boards ?: SimulatedBoards(
-                    Random(view.batch.startedAt), view.batch.injectFaults, view.tally.lastSeq.toLong(),
+                    Random(view.batch.startedAt + view.tally.lastSeq), view.batch.injectFaults, view.tally.lastSeq * 3L,
                 ).also { boards = it }
                 val board = generator.next(view.tally.succeededUids)
                 when (val decision = BatchRules.decide(config, view.tally, board.target.uid)) {

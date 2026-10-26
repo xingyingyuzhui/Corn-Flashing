@@ -194,7 +194,10 @@ private fun PausedPanel(view: BatchView) {
     val lastRow = view.rows.maxByOrNull { it.seq ?: 0 }
     if (lastRow != null && lastRow.status in listOf("CANCELLED", "INTERRUPTED")) UnpluggedCard(lastRow)
     Banner("批次已暂停", reason, bad = reason.contains("失败") || reason.contains("中止"))
-    val failures = view.rows.filter { it.status == "FAILED" }.sortedByDescending { it.seq ?: 0 }.take(view.batch.pauseAfterFailures.coerceAtLeast(3))
+    // Only the trailing run of failures caused the pause; skipped duplicates and interruptions do not break the run.
+    val failures = view.rows.sortedByDescending { it.seq ?: 0 }
+        .filter { it.outcome() == BoardOutcome.FAILED || it.outcome() == BoardOutcome.SUCCEEDED }
+        .takeWhile { it.outcome() == BoardOutcome.FAILED }
     if (reason.contains("连续失败") && failures.isNotEmpty()) {
         CornCard {
             Label("导致暂停的失败")
@@ -205,9 +208,11 @@ private fun PausedPanel(view: BatchView) {
                     Text(row.stage, color = CornColors.Red, fontSize = 12.sp)
                 }
             }
-            val sameUid = failures.mapNotNull { it.targetUid }.distinct().size == 1
-            Banner("判断", if (sameUid) "几次都是同一块板（UID 相同），更像是这块板有问题，请标为不良并换板。"
-                else "不同的板都失败了，更像是接线、探针或供电问题，请检查后继续。", bad = false, icon = "◇")
+            if (failures.size >= 2) {
+                val sameUid = failures.mapNotNull { it.targetUid }.distinct().size == 1
+                Banner("判断", if (sameUid) "几次都是同一块板（UID 相同），更像是这块板有问题，请标为不良并换板。"
+                    else "不同的板都失败了，更像是接线、探针或供电问题，请检查后继续。", bad = false, icon = "◇")
+            }
             failures.firstOrNull()?.let { FailureDetail(it.message, if (it.message.contains("电压")) FlashStage.PROBING else null) }
         }
     }
@@ -265,6 +270,10 @@ fun BatchReportScreen(vm: FlashViewModel, batchId: String, onBack: () -> Unit) {
     val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
         if (uri != null) vm.exportCsv(batchId, uri)
     }
+    val notice by vm.notice.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(notice) { notice?.let { snackbar.showSnackbar(it); vm.clearNotice() } }
+    Box(Modifier.fillMaxSize()) {
     Surface(color = CornColors.Background, modifier = Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().systemBarsPadding().verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -324,5 +333,7 @@ fun BatchReportScreen(vm: FlashViewModel, batchId: String, onBack: () -> Unit) {
             CornButton("导出 CSV", { exporter.launch("${b.workOrder}-report.csv") }, primary = true, icon = "↓")
             Text("CSV 每块板一行：序号、工位、UID、序列号、结果、用时、阶段、说明", color = CornColors.Dim, fontSize = 11.5.sp)
         }
+    }
+    SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
     }
 }
