@@ -1,9 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.CornFlashing" parent="android:style/Theme.Material.Light.NoActionBar">
+    <!-- Always-dark app chrome. Light status/nav icons (windowLight*=false) match SystemBarStyle.dark. -->
+    <style name="Theme.CornFlashing" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
         <item name="android:colorAccent">#006B54</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowBackground">#141210</item>
     </style>
 </resources>

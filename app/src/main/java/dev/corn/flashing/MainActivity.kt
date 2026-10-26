@@ -19,10 +19,20 @@ class MainActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
+        applyLightSystemBarIcons()
+        setContent { CornApp(viewModel()) }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        applyLightSystemBarIcons()
+    }
+
+    /** Keep status/nav icons light (white) on our dark charcoal UI, even if the system theme is light. */
+    private fun applyLightSystemBarIcons() {
         WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = false
             isAppearanceLightNavigationBars = false
         }
-        setContent { CornApp(viewModel()) }
     }
 }
