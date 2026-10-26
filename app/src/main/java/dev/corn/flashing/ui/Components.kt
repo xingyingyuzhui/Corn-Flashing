@@ -461,7 +461,7 @@ fun formatDuration(millis: Long): String {
 fun secs(millis: Long): String = "%.1f s".format(millis / 1000f)
 fun percent(value: Float?): String = value?.let { "${(it * 1000).toInt() / 10f}%" } ?: "—"
 fun shortSha(sha: String) = if (sha.length > 12) sha.take(4) + "…" + sha.takeLast(4) else sha
-fun kb(bytes: Long) = "%.1f KB".format(bytes / 1024f)
+fun kb(bytes: Long) = if (bytes < 1024) "$bytes B" else "%.1f KB".format(bytes / 1024f)
 
 /** UID shown in 4-char groups like the mockup (35FF D605 …). */
 fun shortUid(uid: String?) = when {
