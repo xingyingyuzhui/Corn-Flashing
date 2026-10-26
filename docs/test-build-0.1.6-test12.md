@@ -1,4 +1,6 @@
-# 0.1.6-test12 — 参数保留区（默认关闭）
+# 0.1.6 — 参数保留区（默认关闭）
+
+本记录对应 0.1.6 正式版的开发验证；测试期版本号为 0.1.6-test12，功能与构建一致。
 
 用于保护内部 Flash 模拟 EEPROM 的参数区：用户按页声明不擦写的地址范围，烧录时跳过这些页。功能**默认关闭**，不改变任何既有烧录行为。
 
@@ -38,8 +40,8 @@
 
 ## APK
 
-versionCode 19 / 0.1.6-test12，已通过无线 ADB 安装手机。
-路径 `dist/Corn-Flashing-0.1.6-test12.apk`。
-SHA-256：`65fd2be4be17f068e1b98791ccf5509bf535a7a64514b680e518beb319967fe7`
+versionCode 20 / 0.1.6，已通过无线 ADB 安装手机。
+路径 `dist/Corn-Flashing-0.1.6.apk`。
+SHA-256：见 `dist/Corn-Flashing-0.1.6.apk.sha256`。
 
 用户固件、设备日志和截图仅在本机 `.local-validation/test12/`，不提交仓库。

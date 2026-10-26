@@ -1,19 +1,21 @@
 # Corn Flashing
 
-本地修复测试版：**0.1.6-test12**（尚未发布到 GitHub Release）。参数保留区说明见 [测试版说明](docs/test-build-0.1.6-test12.md)。
+正式版：**0.1.6**（versionCode 20）。本版新增参数保留区、CMSIS-Pack/FLM 算法导入与可扩展兼容性引擎，详见 [0.1.6 说明](docs/test-build-0.1.6-test12.md)。
 
 Android 离线单片机烧录工具的基础框架。目标为 ST-LINK/V2 + STM32F103，后续扩展其他探针和多路批量。
 
 **公开源码 · 非商业授权：[PolyForm Noncommercial 1.0.0](LICENSE)。**
 
-**当前 main：模拟烧录 + 批量 UI；真实 ST-LINK/V2 可识别并擦写 STM32F1（页擦除 / 半字编程 / 回读），不改 Option Bytes。**
+**0.1.6：真实 ST-LINK/V2 可识别并擦写 STM32F1（页擦除 / 半字编程 / 回读）；F0/F4 指定设备组仅识别；可导入 CMSIS-Pack/FLM 算法；参数保留区默认关闭。不改 Option Bytes。**
 
 ## 安装包
 
-安装包在 GitHub Release [v0.1.5](https://github.com/xingyingyuzhui/Corn-Flashing/releases/tag/v0.1.5)，APK 不入库。
+安装包在 GitHub Release [v0.1.6](https://github.com/xingyingyuzhui/Corn-Flashing/releases/tag/v0.1.6)，APK 不入库。
 
-- [`Corn-Flashing-0.1.5.apk`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.5/Corn-Flashing-0.1.5.apk)：日常安装（模拟烧录 + USB 发现；本机 Debug 密钥签名，可覆盖升级）。
-- [`Corn-Flashing-0.1.5-debug.apk`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.5/Corn-Flashing-0.1.5-debug.apk)：与上一包相同，文件名带 debug。
+- [`Corn-Flashing-0.1.6.apk`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.6/Corn-Flashing-0.1.6.apk)：日常安装（模拟烧录 + 真实 ST-LINK F1 烧录；本机 Debug 密钥签名）。
+- [`Corn-Flashing-0.1.6-debug.apk`](https://github.com/xingyingyuzhui/Corn-Flashing/releases/download/v0.1.6/Corn-Flashing-0.1.6-debug.apk)：与上一包相同，文件名带 debug。
+
+> **升级提示**：0.1.6 与 v0.1.5 及更早版本使用不同签名密钥。从旧版升级需先卸载旧包（会清空任务记录与保留区设置），不能直接覆盖安装。
 
 ## 已实现
 
@@ -122,4 +124,4 @@ GRADLE_USER_HOME="$HOME/.gradle" ./gradlew :core:test :app:assembleDebug :app:li
 
 最新算法包阶段验证：[test11记录](docs/test-build-0.1.6-test11.md)。产品配置中可导入.pack/.flm；仅显式绑定且布局匹配后参与任务，外部FLM尚无实板验证记录。
 
-最新参数保留区验证：[test12记录](docs/test-build-0.1.6-test12.md)。默认关闭；开启后按页跳过，固件冲突拒绝，真机 35 页擦写/回读/复位通过，178 项测试。
+参数保留区验证：[0.1.6 记录](docs/test-build-0.1.6-test12.md)。默认关闭；开启后按页跳过，固件冲突拒绝，真机 35 页擦写/回读/复位通过，178 项测试。
