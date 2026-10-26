@@ -249,23 +249,55 @@ private fun Workbench(
                 if (vm.hostSupported) CornColors.Leaf else CornColors.Red),
             ChainNode(Lucide.Usb, "ST-LINK/V2", when { sim -> "模拟器"; probe == null -> "未连接"; probe.permissionGranted -> probe.serial?.take(8) ?: "已授权"; else -> "待授权" },
                 if (probeOk) CornColors.Leaf else if (probe != null) CornColors.Corn else CornColors.Red),
-            ChainNode(Lucide.Chip, if (sim) "F103C8" else "目标板", if (sim) "3.30 V · 模拟" else "—",
-                if (sim) CornColors.Leaf else CornColors.Red),
+            ChainNode(
+                Lucide.Chip,
+                when {
+                    sim -> "F103C8"
+                    state.target != null -> state.target.family.take(10)
+                    else -> "目标板"
+                },
+                when {
+                    sim -> "3.30 V · 模拟"
+                    state.target != null -> "${state.target.flashSizeBytes / 1024} KB" +
+                        (state.target.uid?.let { " · ${it.take(8)}" } ?: "")
+                    else -> "未识别"
+                },
+                when {
+                    sim || state.target != null -> CornColors.Leaf
+                    else -> CornColors.Red
+                },
+            ),
         )
         if (!probeOk) {
             NoProbeCard(probe, devices.isNotEmpty(), vm)
             CornButton("开始烧录", {}, Modifier.fillMaxWidth(), enabled = false, height = 64, radius = 20, icon = Lucide.Bolt,
-                subtitle = if (probe != null && probe.permissionGranted) "真实烧录尚未接入" else "先接上 ST-LINK")
+                subtitle = "先接上并授权 ST-LINK")
             T("没有硬件？用模拟烧录器演练流程", CornColors.Corn, 13.sp, FontWeight.SemiBold, align = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().clickable { vm.prefs.simulator = true }.padding(8.dp))
             return@ScrollBody
         }
-        FirmwareCard(state.firmware, vm.profile, onGoFirmware, vm)
+        if (!sim && probe?.permissionGranted == true) {
+            CornButton(
+                if (state.target == null) "识别芯片" else "重新识别",
+                vm::probeChip,
+                Modifier.fillMaxWidth(),
+                height = 48,
+                radius = 16,
+                icon = Lucide.Chip,
+                enabled = !state.running,
+                subtitle = state.target?.let { "${it.family} · ${it.flashSizeBytes / 1024} KB" } ?: "读 DBGMCU / Flash 容量 / UID",
+            )
+        }
+        FirmwareCard(state.firmware, effectiveProfile(state, vm), onGoFirmware, vm)
         val firmware = state.firmware
-        val pages = firmware?.let { erasePages(it, vm.profile) }
+        val pages = firmware?.let { erasePages(it, effectiveProfile(state, vm)) }
         CornButton("开始烧录", onStart, Modifier.fillMaxWidth(), primary = true, height = 64, radius = 20, icon = Lucide.Bolt,
             enabled = state.ready && !state.importing && firmware != null && !state.running,
-            subtitle = if (firmware == null) "先选择固件" else "擦除 $pages 页 · 写入 ${kb(firmware.image.totalBytes)} · 回读校验")
+            subtitle = when {
+                firmware == null -> "先选择固件"
+                sim -> "模拟 · 擦除 $pages 页 · 写入 ${kb(firmware.image.totalBytes)}"
+                else -> "真实探测后规划；擦写尚未接入 · ${pages ?: "?"} 页"
+            })
         CornCard(padding = 0.dp) {
             Column(Modifier.padding(horizontal = 14.dp)) {
                 SRow("自动换板", "检测到新目标板后自动开始") { CornToggle(vm.prefs.autoNextBoard) { vm.prefs.autoNextBoard = it } }
@@ -297,6 +329,11 @@ fun Chain(vararg nodes: ChainNode) {
             }
         }
     }
+}
+
+fun effectiveProfile(state: SessionState, vm: FlashViewModel): ProductProfile {
+    val target = state.target ?: return vm.profile
+    return dev.corn.flashing.core.ProductProfiles.alignedTo(dev.corn.flashing.core.ProductProfiles.F103_MEDIUM, target)
 }
 
 fun erasePages(firmware: ImportedFirmware, profile: ProductProfile): Int =

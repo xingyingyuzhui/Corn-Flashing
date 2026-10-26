@@ -8,7 +8,7 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/** Discovery and permission only. No interface claiming or USB writes in the framework. */
+/** Discovery and permission. Claiming / SWD I/O lives in [StLinkUsbSession]. */
 data class UsbProbe(
     val connectionId: Int,
     val name: String,
@@ -24,7 +24,7 @@ class UsbProbeMonitor(private val context: Context) {
     private val permissionAction = "${context.packageName}.USB_PERMISSION"
     private val _devices = MutableStateFlow<List<UsbProbe>>(emptyList())
     val devices = _devices.asStateFlow()
-    private val _message = MutableStateFlow("USB 设备仅用于发现与授权，真实烧录后端待接入")
+    private val _message = MutableStateFlow("USB 发现与授权；授权后可在工作台点「识别芯片」读真芯片")
     val message = _message.asStateFlow()
     private val _lastDenied = MutableStateFlow(false)
     /** True after the user denied permission for an ST-LINK candidate that is still attached. */
