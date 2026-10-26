@@ -4,7 +4,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <application android:name=".CornApplication" android:allowBackup="false" android:dataExtractionRules="@xml/data_extraction_rules"
-        android:label="Corn Flashing" android:icon="@drawable/ic_corn" android:supportsRtl="true"
+        android:label="Corn Flashing" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:supportsRtl="true"
         android:theme="@style/Theme.CornFlashing">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>

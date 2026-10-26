@@ -34,7 +34,7 @@ class FlashService : Service() {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val cancel = PendingIntent.getService(this, 0, Intent(this, FlashService::class.java).setAction(ACTION_CANCEL), PendingIntent.FLAG_IMMUTABLE)
         val notification = Notification.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_corn)
+            .setSmallIcon(R.drawable.ic_stat_corn)
             .setContentTitle("Corn Flashing · 模拟烧录")
             .setContentText("正在演示烧录流程，不操作真实芯片")
             .setContentIntent(open).setOngoing(true)

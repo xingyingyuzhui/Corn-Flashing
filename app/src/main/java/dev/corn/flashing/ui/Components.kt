@@ -143,7 +143,7 @@ fun IconBtn(icon: ImageVector, onClick: () -> Unit, color: Color = CornColors.Te
 
 @Composable
 fun AppIcon(size: Dp = 30.dp) {
-    Image(painterResource(R.drawable.corn_logo), null, Modifier.size(size).clip(RoundedCornerShape(size * 0.27f)))
+    Image(painterResource(R.drawable.corn_logo), null, Modifier.size(size))
 }
 
 /** `.top`: app icon + h1 + sub, right slot. */
